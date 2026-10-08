@@ -503,6 +503,63 @@ static bool nbr_is_local(const char *bssid)
 	return false;
 }
 
+bool mesh_neighbor_known(const uint8_t *bssid)
+{
+	char bs[18];
+	unsigned int i;
+
+	roam_mac_str(bssid, bs, sizeof(bs));
+
+	for (i = 0; i < mesh_nbr_n; i++)
+		if (!strcasecmp(mesh_nbr[i].bssid, bs))
+			return true;
+
+	return false;
+}
+
+/* NR element body: BSSID (6), BSSID info (4), operating class (1), channel (1), PHY (1) */
+static bool nr_channel(const char *nr, struct mesh_channel *out)
+{
+	unsigned int op, ch;
+
+	if (strlen(nr) < 26 || sscanf(nr + 20, "%2x%2x", &op, &ch) != 2 || !op || !ch)
+		return false;
+
+	out->op_class = op;
+	out->channel = ch;
+
+	return true;
+}
+
+/* append the channels of other devices' BSSes of this network and band to list[0..n) */
+unsigned int mesh_neighbor_channels(const char *ssid, enum roam_band band,
+				    struct mesh_channel *list, unsigned int n, unsigned int max)
+{
+	unsigned int i, j;
+
+	for (i = 0; i < mesh_nbr_n && n < max; i++) {
+		const struct mesh_neighbor *nb = &mesh_nbr[i];
+		struct mesh_channel ch;
+		bool low;
+
+		if (strcmp(nb->ssid, ssid) || nbr_is_local(nb->bssid) || !nr_channel(nb->nr, &ch))
+			continue;
+
+		low = ch.op_class >= 81 && ch.op_class <= 84;
+		if (low != (band == BAND_LOW))
+			continue;
+
+		for (j = 0; j < n; j++)
+			if (list[j].op_class == ch.op_class && list[j].channel == ch.channel)
+				break;
+
+		if (j == n)
+			list[n++] = ch;
+	}
+
+	return n;
+}
+
 void mesh_neighbors_append(struct blob_buf *b, const char *ssid, int *count, int max)
 {
 	unsigned int i;

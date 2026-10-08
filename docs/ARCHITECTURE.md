@@ -1,6 +1,6 @@
 # Устройство демона
 
-> Документация для версии **roamd 1.2.0-r2** (веб-интерфейс **luci-app-roamd 1.2.0-r1**).
+> Документация для версии **roamd 1.3.0-r1** (веб-интерфейс **luci-app-roamd 1.3.0-r1**).
 >
 > Проект передан [freenetic](https://github.com/unisequence/freenetic) — дальнейшее
 > развитие идёт в его рамках.
@@ -242,6 +242,7 @@ LuCI переводит на язык интерфейса.
 | `mesh_member_remove` | `id`, `reset?` | контроллер | LuCI | удаление узла; `reset: "1"` — со сбросом устройства |
 | `mesh_client_update` | `mac`, `band?`, `alias?`, `nodes?` | контроллер | LuCI | правило клиента: диапазон (`2.4`, `5`, `both`), имя, разрешённые узлы через запятую (пусто — все) |
 | `mesh_client_forget` | `mac` | контроллер | LuCI | удалить клиента из реестра и его правила |
+| `mesh_client_host` | `mac`, `name` | контроллер | LuCI | запомнить в реестре имя, которое сообщило устройство (LuCI находит его обратным DNS по IP клиента) |
 | `mesh_network_update` | `ssid`, `roaming` | контроллер | LuCI | флажок роуминга у сети; применяется сразу — и к точкам контроллера, и к узлам при ближайшей раскатке |
 | `mesh_profile` | — | контроллер | внутренний | профиль для узлов в том виде, в каком он уходит по каналу |
 | `mesh_settings` | `backhaul_enabled?`, `backhaul_ssid?`, `backhaul_key?`, `wifi_shutdown?`, `node_ui?`, `backhaul_delta?`, `backhaul_min_signal?`, `auto_update?`, `auto_update_every?`, `auto_update_unit?`, `pkg_url?`, `controller_name?` | контроллер | LuCI | запись секции `mesh`, перестройка транспорта, таймера и раскатка |
