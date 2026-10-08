@@ -1,7 +1,7 @@
 #!/bin/sh
 # shellcheck shell=dash
 
-REPO="Ground-Zerro/roamd"
+REPO="teuchezh/roamd"
 RAW="https://raw.githubusercontent.com/$REPO/main"
 FEED_BASE="https://github.com/$REPO/releases/download"
 FEED_NAME="roamd"
