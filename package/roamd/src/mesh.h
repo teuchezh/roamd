@@ -380,6 +380,7 @@ void mesh_clients_dump(struct blob_buf *b);
 unsigned int mesh_clients_count(void);
 unsigned int mesh_clients_local(void);
 bool mesh_client_forget(const char *mac);
+bool mesh_client_host(const char *mac, const char *name);
 void mesh_clients_load(void);
 void mesh_clients_save(void);
 bool mesh_client_set(const char *mac, const char *band, const char *alias, const char *nodes);

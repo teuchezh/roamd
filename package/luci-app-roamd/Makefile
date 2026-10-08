@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=Wi-Fi roaming configuration
-LUCI_DEPENDS:=+luci-base +roamd
+LUCI_DEPENDS:=+luci-base +roamd +rpcd-mod-rrdns
 LUCI_PKGARCH:=all
 
 PKG_VERSION:=1.2.0-r1
