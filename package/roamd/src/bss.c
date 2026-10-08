@@ -510,19 +510,29 @@ static int handle_beacon_report(struct blob_attr *msg)
 		return 0;
 
 	target = roam_bss_by_bssid((uint8_t *)bssid->ether_addr_octet);
-	if (!target)
+	if (!target && !mesh_neighbor_known((uint8_t *)bssid->ether_addr_octet))
 		return 0;
 
 	rcpi = (uint8_t)blobmsg_get_u16(tb[BR_RCPI]);
 	if (rcpi >= ROAMD_RCPI_IMPLAUSIBLE) {
-		roam_log(ROAM_L_DEBUG, "roamd: beacon report %s on %s GHz dropped, rcpi %u",
-			 sta->mac, roam_band_name(target->band), rcpi);
+		roam_log(ROAM_L_DEBUG, "roamd: beacon report %s for %s dropped, rcpi %u",
+			 sta->mac, blobmsg_get_string(tb[BR_BSSID]), rcpi);
 		return 0;
 	}
 
 	signal = ((int)rcpi / 2) - 110;
 
 	sta->beacon_req_silent = 0;
+	roam_sta_measured(sta, (uint8_t *)bssid->ether_addr_octet, signal);
+
+	/* band data stays AP-side for the client's own band; the controller
+	 * reads the client-side value from the measurements */
+	if (!target || (sta->bss && target->band == sta->bss->band)) {
+		roam_log(ROAM_L_DEBUG, "roamd: beacon report %s for %s signal %d (rcpi %u)",
+			 sta->mac, blobmsg_get_string(tb[BR_BSSID]), signal, rcpi);
+		return 0;
+	}
+
 	sta->band[target->band].signal = signal;
 	sta->band[target->band].seen = roam_now;
 	sta->band[target->band].present = true;

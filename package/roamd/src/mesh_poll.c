@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -21,6 +22,11 @@
 #define POLL_MISS_LIMIT	2
 #define KH_BSSID_NONE		"00:00:00:00:00:00|"
 
+struct poll_meas {
+	char bssid[MESH_MAC_MAX];
+	int signal;
+};
+
 struct poll_sta {
 	uint8_t addr[6];
 	char mac[MESH_MAC_MAX];
@@ -29,6 +35,8 @@ struct poll_sta {
 	uint32_t connected;
 	uint8_t band;
 	bool client;
+	struct poll_meas meas[ROAMD_MEAS_MAX];
+	unsigned int n_meas;
 };
 
 struct poll_ap {
@@ -166,6 +174,29 @@ static uint32_t attr_u32(struct blob_attr *table, const char *name)
 	return cur ? blobmsg_get_u32(cur) : 0;
 }
 
+static void meas_collect(struct poll_sta *s, struct blob_attr *list)
+{
+	struct blob_attr *cur;
+	int rem;
+
+	if (!list)
+		return;
+
+	blobmsg_for_each_attr(cur, list, rem) {
+		const char *bssid;
+
+		if (blobmsg_type(cur) != BLOBMSG_TYPE_TABLE || s->n_meas >= ROAMD_MEAS_MAX)
+			continue;
+
+		bssid = attr_str(cur, "bssid");
+		if (!bssid || !attr_field(cur, "signal", BLOBMSG_TYPE_INT32))
+			continue;
+
+		snprintf(s->meas[s->n_meas].bssid, sizeof(s->meas[0].bssid), "%s", bssid);
+		s->meas[s->n_meas++].signal = (int)attr_u32(cur, "signal");
+	}
+}
+
 static void sta_collect(struct poll_node *n, struct blob_attr *list, bool client)
 {
 	struct blob_attr *cur;
@@ -201,6 +232,9 @@ static void sta_collect(struct poll_node *n, struct blob_attr *list, bool client
 		s->connected = client ? attr_u32(cur, "connected") : 0;
 		s->band = mesh_band_bit(attr_str(cur, "band"));
 		s->client = client;
+
+		if (client)
+			meas_collect(s, attr_field(cur, "measured", BLOBMSG_TYPE_ARRAY));
 	}
 }
 
@@ -878,6 +912,60 @@ static unsigned int neighbor_list(const struct poll_node *best, const uint8_t *a
 	return count;
 }
 
+static const struct poll_node *bss_owner(const char *bssid, const char *ssid, uint8_t band)
+{
+	unsigned int i, j;
+
+	for (i = 0; i < n_nodes; i++)
+		for (j = 0; j < nodes[i].n_ap; j++) {
+			const struct poll_ap *a = &nodes[i].ap[j];
+
+			if (!strcasecmp(a->bssid, bssid) && !strcmp(a->ssid, ssid) &&
+			    mesh_band_bit(a->band) == band)
+				return &nodes[i];
+		}
+
+	return NULL;
+}
+
+/*
+ * Best other device by the client's own beacon reports. Needs the client's
+ * measurement of its current BSS as well, so both sides are seen the same way.
+ */
+static const struct poll_node *best_measured(const struct poll_sta *c, const struct poll_node *home,
+					     int *best_signal, int *home_signal)
+{
+	const struct poll_node *best = NULL;
+	enum roam_band rb = mesh_band_from_bit(c->band);
+	bool have_home = false;
+	unsigned int i;
+
+	for (i = 0; i < c->n_meas; i++) {
+		const struct poll_node *n = bss_owner(c->meas[i].bssid, c->ssid, c->band);
+		int signal = c->meas[i].signal;
+
+		if (!n)
+			continue;
+
+		if (n == home) {
+			if (!have_home || signal > *home_signal)
+				*home_signal = signal;
+			have_home = true;
+			continue;
+		}
+
+		if (!n->online || roam_admit(c->addr, n->id, rb) != ADMIT_OK)
+			continue;
+
+		if (!best || signal > *best_signal) {
+			best = n;
+			*best_signal = signal;
+		}
+	}
+
+	return have_home ? best : NULL;
+}
+
 static void steer_client(unsigned int from, unsigned int to, unsigned int client)
 {
 	const struct poll_sta *c = ref_sta(&refs[client]);
@@ -887,10 +975,17 @@ static void steer_client(unsigned int from, unsigned int to, unsigned int client
 	enum roam_band rb = mesh_band_from_bit(band);
 	const struct poll_node *best = NULL;
 	int best_signal = 0, home_signal = 0;
+	const char *source = "heard";
 	char args[1024], list[768];
 
 	if (!net_roaming(ssid))
 		return;
+
+	best = best_measured(c, &nodes[home], &best_signal, &home_signal);
+	if (best) {
+		source = "measured by the client";
+		goto decide;
+	}
 
 	for (k = from; k < to; k++) {
 		const struct poll_sta *s = ref_sta(&refs[k]);
@@ -912,6 +1007,7 @@ static void steer_client(unsigned int from, unsigned int to, unsigned int client
 	if (!best || best == &nodes[home])
 		return;
 
+decide:
 	if (roam_admit(c->addr, nodes[home].id, rb) == ADMIT_OK &&
 	    best_signal - home_signal < config.node_rssi_diff)
 		return;
@@ -927,9 +1023,9 @@ static void steer_client(unsigned int from, unsigned int to, unsigned int client
 		snprintf(args, sizeof(args), "{\"mac\":\"%s\",\"id\":\"%s\"}", mac, best->id);
 
 	roam_log(ROAM_L_INFO,
-		 "mesh: %s is heard better on %s (%s GHz, %d dBm) than on %s (%d dBm), moving",
+		 "mesh: %s is better on %s (%s GHz, %d dBm) than on %s (%d dBm), %s, moving",
 		 mac, best->id, roam_band_name(rb), best_signal,
-		 nodes[home].id, home_signal);
+		 nodes[home].id, home_signal, source);
 
 	member_call(&nodes[home], "mesh_steer", args);
 }

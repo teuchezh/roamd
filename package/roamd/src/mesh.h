@@ -388,6 +388,15 @@ bool mesh_client_set(const char *mac, const char *band, const char *alias, const
 
 void mesh_neighbors_set(struct blob_attr *arr);
 void mesh_neighbors_append(struct blob_buf *b, const char *ssid, int *count, int max);
+bool mesh_neighbor_known(const uint8_t *bssid);
+
+struct mesh_channel {
+	uint8_t op_class;
+	uint8_t channel;
+};
+
+unsigned int mesh_neighbor_channels(const char *ssid, enum roam_band band,
+				    struct mesh_channel *list, unsigned int n, unsigned int max);
 
 enum mesh_job_kind {
 	MESH_JOB_DISCOVER,
