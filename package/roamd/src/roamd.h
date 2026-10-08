@@ -151,9 +151,12 @@ struct roam_sta {
 	struct roam_bss *bss;
 
 	uint64_t connected_since;
+	uint64_t left_at;
+	uint8_t left_band;
 	uint64_t last_steer;
 	uint64_t last_beacon_req;
 
+	uint32_t polled;
 	uint32_t steer_count;
 	uint32_t flap_count;
 	uint64_t give_up_until;
@@ -236,7 +239,7 @@ int roam_sta_signal_seen(const struct roam_sta *sta, enum roam_band band, uint32
 bool roam_policy_allow(struct roam_sta *sta, struct roam_bss *bss, enum roam_event ev);
 void roam_policy_kick(struct roam_sta *sta, struct roam_bss *from);
 void roam_policy_run(struct roam_bss *bss);
-bool roam_policy_can_steer(const struct roam_sta *sta);
+bool roam_policy_can_steer(struct roam_sta *sta);
 
 void roam_ubus_object_init(void);
 void roam_ubus_call_local(const char *method, struct blob_attr *msg);

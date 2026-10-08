@@ -11,6 +11,9 @@
 #define KICK_REASON		5
 #define STEER_RETRY_INTERVAL	5000
 #define BEACON_REQ_PER_POLL	4
+/* ponytail: fixed pause before retrying a client that ignored every attempt;
+ * make it a policy option if 10 min turns out wrong in the field */
+#define RETRY_RESET_TIME	600000
 
 static struct blob_buf b;
 
@@ -110,8 +113,12 @@ static void policy_beacon_request(struct roam_sta *sta, struct roam_bss *from, s
 	if (!sta->rrm || !config.neighbor_reports || !to->op_class)
 		return;
 
-	if (sta->beacon_req_silent >= config.steer_retries)
-		return;
+	if (sta->beacon_req_silent >= config.steer_retries) {
+		if (roam_now - sta->last_beacon_req < RETRY_RESET_TIME)
+			return;
+
+		sta->beacon_req_silent = 0;
+	}
 
 	if (roam_now - sta->last_beacon_req < config.beacon_req_interval)
 		return;
@@ -208,10 +215,14 @@ void roam_policy_kick(struct roam_sta *sta, struct roam_bss *from)
 	sta_del_client(sta, from);
 }
 
-bool roam_policy_can_steer(const struct roam_sta *sta)
+bool roam_policy_can_steer(struct roam_sta *sta)
 {
-	if (sta->steer_count >= config.steer_retries)
-		return false;
+	if (sta->steer_count >= config.steer_retries) {
+		if (roam_now - sta->last_steer < RETRY_RESET_TIME)
+			return false;
+
+		sta->steer_count = 0;
+	}
 
 	return !sta->last_steer || roam_now - sta->last_steer >= STEER_RETRY_INTERVAL;
 }

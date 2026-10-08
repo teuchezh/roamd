@@ -120,25 +120,31 @@ void roam_sta_event(struct roam_bss *bss, const uint8_t *addr, int signal)
 void roam_sta_set_connected(struct roam_sta *sta, struct roam_bss *bss, int signal)
 {
 	if (sta->bss != bss) {
-		struct roam_bss *prev = sta->bss;
+		/* the old BSS may report the client gone before the new one sees it */
+		bool moved = sta->bss || (sta->left_at && roam_now - sta->left_at < config.age_time &&
+					  sta->left_band != bss->band);
+		uint8_t from = sta->bss ? sta->bss->band : sta->left_band;
 
-		if (prev)
-			mesh_log_local(sta->mac, prev->band, bss->band, NULL, MESH_EV_ROAM);
+		if (moved)
+			mesh_log_local(sta->mac, from, bss->band, NULL, MESH_EV_ROAM);
 		else
 			mesh_log_local(sta->mac, MESH_BAND_NA, bss->band, NULL, MESH_EV_CONNECT);
 
-		if (prev && prev->band != bss->band) {
-			if (sta->last_steer && bss->band == sta->steer_from &&
-			    roam_now - sta->last_steer < config.age_time) {
-				if (++sta->flap_count >= STA_FLAP_LIMIT) {
-					sta->give_up_until = roam_now + STA_FLAP_PAUSE;
-					roam_log(ROAM_L_INFO,
-						 "roamd: %s keeps returning to %s GHz, leaving it alone",
-						 sta->mac, roam_band_name(bss->band));
-				}
-			} else {
+		if (moved && from != bss->band) {
+			/* the move our own steer caused must not clear the count,
+			 * or a steer/return cycle never reaches the limit */
+			bool steered = sta->last_steer &&
+				       roam_now - sta->last_steer < config.age_time;
+
+			if (!steered) {
 				sta->flap_count = 0;
 				sta->give_up_until = 0;
+			} else if (bss->band == sta->steer_from &&
+				   ++sta->flap_count >= STA_FLAP_LIMIT) {
+				sta->give_up_until = roam_now + STA_FLAP_PAUSE;
+				roam_log(ROAM_L_INFO,
+					 "roamd: %s keeps returning to %s GHz, leaving it alone",
+					 sta->mac, roam_band_name(bss->band));
 			}
 		}
 
@@ -175,6 +181,11 @@ int roam_sta_signal(const struct roam_sta *sta, enum roam_band band)
 
 void roam_sta_reset(struct roam_sta *sta)
 {
+	if (sta->bss) {
+		sta->left_band = sta->bss->band;
+		sta->left_at = roam_now;
+	}
+
 	sta->bss = NULL;
 	sta->connected_since = 0;
 }

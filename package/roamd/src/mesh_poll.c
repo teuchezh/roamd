@@ -808,6 +808,7 @@ static void ghosts_drop(unsigned int from, unsigned int to)
 static void neighbors_push(void)
 {
 	static struct blob_buf b;
+	static bool pushed;
 	unsigned int i, j, count = 0;
 	char *json;
 	void *arr;
@@ -833,7 +834,7 @@ static void neighbors_push(void)
 
 	blobmsg_close_array(&b, arr);
 
-	if (!count)
+	if (!count && !pushed)
 		return;
 
 	json = blobmsg_format_json(b.head, true);
@@ -845,6 +846,7 @@ static void neighbors_push(void)
 			member_call(&nodes[i], "mesh_neighbors", json);
 
 	free(json);
+	pushed = count > 0;
 }
 
 static unsigned int neighbor_list(const struct poll_node *best, const uint8_t *addr,

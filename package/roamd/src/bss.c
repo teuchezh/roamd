@@ -181,7 +181,8 @@ static bool client_rrm_beacon(struct blob_attr *client)
 	return !!(blobmsg_get_u32(blobmsg_data(list)) & 0x70);
 }
 
-static void client_update(struct roam_bss *bss, struct blob_attr *client, const char *mac)
+static void client_update(struct roam_bss *bss, struct blob_attr *client, const char *mac,
+			  uint32_t round)
 {
 	enum {
 		CL_ASSOC,
@@ -214,6 +215,7 @@ static void client_update(struct roam_bss *bss, struct blob_attr *client, const 
 	if (tb[CL_SIGNAL])
 		signal = (int32_t)blobmsg_get_u32(tb[CL_SIGNAL]);
 
+	sta->polled = round;
 	sta->btm = client_ext_capa_btm(client);
 	sta->rrm = client_rrm_beacon(client);
 	sta->band[bss->band].ht = tb[CL_HT] && blobmsg_get_u8(tb[CL_HT]);
@@ -224,16 +226,26 @@ static void client_update(struct roam_bss *bss, struct blob_attr *client, const 
 static void clients_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 {
 	static const struct blobmsg_policy policy = { "clients", BLOBMSG_TYPE_TABLE };
+	static uint32_t round;
 	struct roam_bss *bss = req->priv;
 	struct blob_attr *list = NULL, *cur;
+	struct roam_sta *sta;
 	int rem;
 
 	blobmsg_parse(&policy, 1, &list, blob_data(msg), blob_len(msg));
 	if (!list)
 		return;
 
+	round++;
 	blobmsg_for_each_attr(cur, list, rem)
-		client_update(bss, cur, blobmsg_name(cur));
+		client_update(bss, cur, blobmsg_name(cur), round);
+
+	/* hostapd does not always report a client that left (reassoc to another
+	 * node, inactivity), so drop whoever this BSS no longer lists */
+	avl_for_each_element(&roam_sta_tree, sta, avl) {
+		if (sta->bss == bss && sta->polled != round)
+			roam_sta_disconnected(sta);
+	}
 }
 
 static void nr_own_cb(struct ubus_request *req, int type, struct blob_attr *msg)
@@ -293,7 +305,7 @@ static void neighbor_sync(struct roam_bss *bss)
 
 	blobmsg_close_array(&b, list);
 
-	if (!count)
+	if (!count && !bss->nr_sent)
 		return;
 
 	fp = blob_fingerprint(b.head);
@@ -521,7 +533,7 @@ static int handle_beacon_report(struct blob_attr *msg)
 	return 0;
 }
 
-static int handle_disassoc(struct blob_attr *msg)
+static int handle_disassoc(struct roam_bss *bss, struct blob_attr *msg)
 {
 	static const struct blobmsg_policy policy = { "address", BLOBMSG_TYPE_STRING };
 	struct blob_attr *tb = NULL;
@@ -537,7 +549,7 @@ static int handle_disassoc(struct blob_attr *msg)
 		return 0;
 
 	sta = roam_sta_get((uint8_t *)ea->ether_addr_octet, false);
-	if (sta)
+	if (sta && sta->bss == bss)
 		roam_sta_disconnected(sta);
 
 	return 0;
@@ -556,7 +568,7 @@ static int bss_notify_cb(struct ubus_context *ctx, struct ubus_object *obj,
 		return handle_beacon_report(msg);
 
 	if (!strcmp(method, "disassoc") || !strcmp(method, "deauth"))
-		return handle_disassoc(msg);
+		return handle_disassoc(bss, msg);
 
 	return handle_sta_event(bss, method, msg);
 }
