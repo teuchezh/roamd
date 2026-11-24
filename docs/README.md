@@ -34,7 +34,7 @@
 | `package/roamd/files/` | Init-скрипт, конфигурация по умолчанию, ACL канала управления |
 | `package/luci-app-roamd/` | Страницы LuCI «Роуминг Wi-Fi» и «MESH», русский перевод |
 | `build.sh`, `targets/` | Сборка пакетов под матрицу веток и архитектур |
-| `repo.sh`, `.github/workflows/release.yml` | Индексы репозитория, подпись, публикация релизов |
+| `repo.sh`, `.github/workflows/release.yml`, `.github/workflows/pages.yml` | Индексы репозитория, подпись, публикация релизов и копия фидов на GitHub Pages |
 | `install.sh` | Установка на роутер из репозитория проекта |
 | `keys/` | Публичные ключи подписи репозитория |
 

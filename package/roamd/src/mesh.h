@@ -22,7 +22,7 @@
 #define MESH_BH_ALLOW_LEN	(MESH_ALLOW_MAX * (MESH_ID_MAX + 1))
 #define MESH_BH_LIMITS_LEN	768
 #define MESH_IFACE_MAX		16
-#define MESH_PKG_URL_DEFAULT	"https://github.com/Ground-Zerro/roamd/releases/download/feed-%b-%a"
+#define MESH_PKG_URL_DEFAULT	"https://github.com/teuchezh/roamd/releases/download/feed-%b-%a"
 
 enum mesh_role {
 	MESH_CONTROLLER,

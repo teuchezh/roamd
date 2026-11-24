@@ -143,20 +143,29 @@ GitHub не даёт каталогов внутри релиза, а `opkg` и 
 `feed-<ветка>-<архитектура>`, и его адрес — адрес репозитория:
 
 ```
-https://github.com/Ground-Zerro/roamd/releases/download/feed-24.10-mipsel_24kc
+https://github.com/teuchezh/roamd/releases/download/feed-24.10-mipsel_24kc
         └─ Packages, Packages.gz, Packages.sig, roamd_*.ipk, luci-app-roamd_*.ipk, …
 
-https://github.com/Ground-Zerro/roamd/releases/download/feed-25.12-aarch64_cortex-a53
+https://github.com/teuchezh/roamd/releases/download/feed-25.12-aarch64_cortex-a53
         └─ packages.adb, roamd-*.apk, luci-app-roamd-*.apk, …
 ```
 
 Эти релизы перезаписываются при каждом выпуске, тег не меняется — адрес у пользователей остаётся
 прежним. Рядом создаётся версионный релиз `v<версия>` со всеми пакетами сразу; имена файлов
-начинаются с ветки и архитектуры (`25.12-x86_64-roamd-1.3.0-r2.apk`).
+начинаются с ветки и архитектуры (`25.12-x86_64-roamd-1.3.0-r2.apk`). `install.sh` (`FEED_BASE`)
+и пустой `roamd.mesh.pkg_url` (`MESH_PKG_URL_DEFAULT` в `package/roamd/src/mesh.h`) указывают на
+эти релизы.
 
 При публикации устаревшие пакеты удаляются: в релизе фида — **после** загрузки нового индекса
 (пока он не загружен, роутеры читают старый, и его пакеты должны быть на месте), в версионном
 релизе — до загрузки и только для пар текущего запуска.
+
+**Копия на GitHub Pages.** После публикации `.github/workflows/pages.yml` забирает все релизы
+`feed-*` (`repo.sh site`) и выкладывает их на GitHub Pages этого репозитория. Сайт каждый раз
+собирается заново и заменяется целиком, поэтому индекс и пакеты в нём согласованы. Раздача
+включается в Settings → Pages → Source → «GitHub Actions». Workflow можно запустить и вручную,
+без пересборки; файл он читает с ветки `main`, поэтому правило окружения `github-pages`
+(«только `main`») выпуск по тегу не блокирует. Установщик и демон на эту копию не переключаются.
 
 ### Подпись
 
@@ -191,6 +200,10 @@ workflow (`1.3.0-r2`); она должна совпадать с `PKG_VERSION`, 
 
 Запуск с частью веток дополняет релиз, а не заменяет: пары, не попавшие в запуск, остаются
 нетронутыми.
+
+После успешной сборки запускается `.github/workflows/pages.yml`: собирает все релизы `feed-*` в
+каталог (`repo.sh site`) и публикует его на GitHub Pages. Его можно запустить и вручную, без
+пересборки.
 
 Те же шаги работают локально:
 
@@ -233,6 +246,7 @@ RELEASE=24.10 ./build.sh mipsel_24kc
 ./repo.sh              # построить индексы Packages и поднять раздачу dist/ по HTTPS
 ./repo.sh index        # только индексы
 ./repo.sh stop         # остановить раздачу
+./repo.sh site <каталог>  # скачать релизы feed-* в каталог для GitHub Pages (нужен gh)
 PORT=8080 ./repo.sh    # другой порт (по умолчанию 8079)
 ```
 
