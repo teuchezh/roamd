@@ -1,6 +1,6 @@
 # Сборка и выпуск
 
-> Документация для версии **roamd 1.3.0-r1** (веб-интерфейс **luci-app-roamd 1.3.0-r1**).
+> Документация для версии **roamd 1.3.0-r2** (веб-интерфейс **luci-app-roamd 1.3.0-r2**).
 >
 > Проект передан [freenetic](https://github.com/unisequence/freenetic) — дальнейшее
 > развитие идёт в его рамках.
@@ -119,8 +119,8 @@ make package/roamd/compile package/luci-app-roamd/compile -j$(nproc)
 
 | Файл | Строка |
 |---|---|
-| `package/roamd/Makefile` | `PKG_VERSION:=1.3.0-r1` |
-| `package/luci-app-roamd/Makefile` | `PKG_VERSION:=1.3.0-r1`, `PKG_PO_VERSION:=$(PKG_VERSION)` |
+| `package/roamd/Makefile` | `PKG_VERSION:=1.3.0-r2` |
+| `package/luci-app-roamd/Makefile` | `PKG_VERSION:=1.3.0-r2`, `PKG_PO_VERSION:=$(PKG_VERSION)` |
 
 * Пакеты нумеруются независимо: изменился демон — поднимается версия `roamd`,
   изменился интерфейс — `luci-app-roamd`.
@@ -143,20 +143,29 @@ GitHub не даёт каталогов внутри релиза, а `opkg` и 
 `feed-<ветка>-<архитектура>`, и его адрес — адрес репозитория:
 
 ```
-https://github.com/Ground-Zerro/roamd/releases/download/feed-24.10-mipsel_24kc
+https://github.com/teuchezh/roamd/releases/download/feed-24.10-mipsel_24kc
         └─ Packages, Packages.gz, Packages.sig, roamd_*.ipk, luci-app-roamd_*.ipk, …
 
-https://github.com/Ground-Zerro/roamd/releases/download/feed-25.12-aarch64_cortex-a53
+https://github.com/teuchezh/roamd/releases/download/feed-25.12-aarch64_cortex-a53
         └─ packages.adb, roamd-*.apk, luci-app-roamd-*.apk, …
 ```
 
 Эти релизы перезаписываются при каждом выпуске, тег не меняется — адрес у пользователей остаётся
 прежним. Рядом создаётся версионный релиз `v<версия>` со всеми пакетами сразу; имена файлов
-начинаются с ветки и архитектуры (`25.12-x86_64-roamd-1.3.0-r1.apk`).
+начинаются с ветки и архитектуры (`25.12-x86_64-roamd-1.3.0-r2.apk`). `install.sh` (`FEED_BASE`)
+и пустой `roamd.mesh.pkg_url` (`MESH_PKG_URL_DEFAULT` в `package/roamd/src/mesh.h`) указывают на
+эти релизы.
 
 При публикации устаревшие пакеты удаляются: в релизе фида — **после** загрузки нового индекса
 (пока он не загружен, роутеры читают старый, и его пакеты должны быть на месте), в версионном
 релизе — до загрузки и только для пар текущего запуска.
+
+**Копия на GitHub Pages.** После публикации `.github/workflows/pages.yml` забирает все релизы
+`feed-*` (`repo.sh site`) и выкладывает их на GitHub Pages этого репозитория. Сайт каждый раз
+собирается заново и заменяется целиком, поэтому индекс и пакеты в нём согласованы. Раздача
+включается в Settings → Pages → Source → «GitHub Actions». Workflow можно запустить и вручную,
+без пересборки; файл он читает с ветки `main`, поэтому правило окружения `github-pages`
+(«только `main`») выпуск по тегу не блокирует. Установщик и демон на эту копию не переключаются.
 
 ### Подпись
 
@@ -180,7 +189,7 @@ openssl rsa -in roamd.pem -pubout -out keys/roamd-apk.rsa.pub
 
 `.github/workflows/release.yml` запускается по тегу `v*` или вручную (можно указать ветки через
 пробел). Версия выпуска берётся из тега, при ручном запуске — из строки `version` в самом
-workflow (`1.3.0-r1`); она должна совпадать с `PKG_VERSION`, иначе пакеты уйдут в чужой
+workflow (`1.3.0-r2`); она должна совпадать с `PKG_VERSION`, иначе пакеты уйдут в чужой
 версионный релиз.
 
 | Задача | Действие |
@@ -191,6 +200,10 @@ workflow (`1.3.0-r1`); она должна совпадать с `PKG_VERSION`, 
 
 Запуск с частью веток дополняет релиз, а не заменяет: пары, не попавшие в запуск, остаются
 нетронутыми.
+
+После успешной сборки запускается `.github/workflows/pages.yml`: собирает все релизы `feed-*` в
+каталог (`repo.sh site`) и публикует его на GitHub Pages. Его можно запустить и вручную, без
+пересборки.
 
 Те же шаги работают локально:
 
@@ -203,9 +216,11 @@ RELEASE=24.10 ./build.sh mipsel_24kc
 
 `install.sh` определяет ветку и архитектуру, проверяет свободное место и DNS, кладёт публичный
 ключ, добавляет репозиторий в `/etc/opkg/customfeeds.conf` или
-`/etc/apk/repositories.d/roamd.list` без дублей и ставит пакеты штатным менеджером: отсутствующие
-устанавливает (`opkg install` / `apk add`), уже установленные обновляет (`opkg upgrade` /
-`apk upgrade`), поэтому повторный запуск обновляет систему. В конце сообщает установленную версию
+`/etc/apk/repositories.d/roamd.list` без дублей и ставит пакеты штатным менеджером. На opkg
+отсутствующие устанавливает `opkg install`, уже установленные обновляет `opkg upgrade`. На apk
+сначала `apk add` — он ставит отсутствующие и снимает закрепление за файлом (`roamd><хэш>` в
+`/etc/apk/world`), которое оставляют ручная установка `apk add файл.apk` и обновление контроллера
+из интерфейса, — затем `apk upgrade`. Поэтому повторный запуск обновляет систему. В конце сообщает установленную версию
 `roamd`, а при повторном запуске — версию до и после или что обновлять нечего. `install.sh --check` только показывает ветку, архитектуру, адрес репозитория и
 пакетный менеджер.
 
@@ -231,6 +246,7 @@ RELEASE=24.10 ./build.sh mipsel_24kc
 ./repo.sh              # построить индексы Packages и поднять раздачу dist/ по HTTPS
 ./repo.sh index        # только индексы
 ./repo.sh stop         # остановить раздачу
+./repo.sh site <каталог>  # скачать релизы feed-* в каталог для GitHub Pages (нужен gh)
 PORT=8080 ./repo.sh    # другой порт (по умолчанию 8079)
 ```
 

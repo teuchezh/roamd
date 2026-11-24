@@ -11,9 +11,6 @@
 #define KICK_REASON		5
 #define STEER_RETRY_INTERVAL	5000
 #define BEACON_REQ_PER_POLL	4
-/* ponytail: fixed pause before retrying a client that ignored every attempt;
- * make it a policy option if 10 min turns out wrong in the field */
-#define RETRY_RESET_TIME	600000
 #define MESH_MEASURE_INTERVAL	5000
 #define BEACON_REQ_GAP		2000
 #define MESH_MEASURE_CHANNELS	8
@@ -110,21 +107,10 @@ allow:
 	return true;
 }
 
-/* a client that ignored steer_retries requests in a row is left alone for a while */
-static bool beacon_req_silenced(struct roam_sta *sta)
+/* a client that ignored steer_retries requests stays quiet until it reconnects */
+static bool beacon_req_silenced(const struct roam_sta *sta)
 {
-	uint64_t last = sta->last_beacon_req > sta->last_mesh_req ?
-			sta->last_beacon_req : sta->last_mesh_req;
-
-	if (sta->beacon_req_silent < config.steer_retries)
-		return false;
-
-	if (roam_now - last < RETRY_RESET_TIME)
-		return true;
-
-	sta->beacon_req_silent = 0;
-
-	return false;
+	return sta->beacon_req_silent >= config.steer_retries;
 }
 
 static void beacon_req_send(struct roam_sta *sta, struct roam_bss *from, const char *ssid,
@@ -277,14 +263,10 @@ void roam_policy_kick(struct roam_sta *sta, struct roam_bss *from)
 	sta_del_client(sta, from);
 }
 
-bool roam_policy_can_steer(struct roam_sta *sta)
+bool roam_policy_can_steer(const struct roam_sta *sta)
 {
-	if (sta->steer_count >= config.steer_retries) {
-		if (roam_now - sta->last_steer < RETRY_RESET_TIME)
-			return false;
-
-		sta->steer_count = 0;
-	}
+	if (sta->steer_count >= config.steer_retries)
+		return false;
 
 	return !sta->last_steer || roam_now - sta->last_steer >= STEER_RETRY_INTERVAL;
 }
