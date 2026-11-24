@@ -60,7 +60,17 @@ static const struct opt_desc opts[] = {
 	OPT("deny_time", OPT_U32, deny_time),
 	OPT("steer_retries", OPT_U32, steer_retries),
 	OPT("beacon_req_interval", OPT_U32, beacon_req_interval),
-	OPT("log_level", OPT_INT, log_level)
+	OPT("log_level", OPT_INT, log_level),
+	OPT("bandwidth_threshold", OPT_INT, bandwidth_threshold),
+	OPT("use_station_count", OPT_BOOL, use_station_count),
+	OPT("max_station_diff", OPT_INT, max_station_diff),
+	OPT("load_balancing_threshold", OPT_U32, load_balancing_threshold),
+	OPT("chan_util_val", OPT_INT, chan_util_val),
+	OPT("max_chan_util_val", OPT_INT, max_chan_util_val),
+	OPT("chan_util_avg_period", OPT_U32, chan_util_avg_period),
+	OPT("load_kick_threshold", OPT_U32, load_kick_threshold),
+	OPT("load_kick_min_clients", OPT_U32, load_kick_min_clients),
+	OPT("initial_connect_delay", OPT_U32, initial_connect_delay)
 };
 
 #undef OPT
@@ -96,6 +106,17 @@ static void roam_config_init(void)
 	config.steer_retries = 3;
 	config.beacon_req_interval = 20000;
 	config.log_level = ROAM_L_INFO;
+
+	config.bandwidth_threshold = 6;
+	config.use_station_count = false;
+	config.max_station_diff = 1;
+	config.load_balancing_threshold = 0;
+	config.chan_util_val = 140;
+	config.max_chan_util_val = 170;
+	config.chan_util_avg_period = 3;
+	config.load_kick_threshold = 0;
+	config.load_kick_min_clients = 10;
+	config.initial_connect_delay = 0;
 }
 
 const char *uci_option_any(struct uci_context *ctx, struct uci_section *s, const char *name)
@@ -379,6 +400,25 @@ static void config_sanitize(void)
 		config.age_time = config.hold_time * 3;
 	if (!config.steer_retries)
 		config.steer_retries = 1;
+	if (config.bandwidth_threshold < 0)
+		config.bandwidth_threshold = 0;
+	if (config.max_station_diff < 1)
+		config.max_station_diff = 1;
+	if (config.chan_util_val < 0)
+		config.chan_util_val = 0;
+	if (config.chan_util_val > 255)
+		config.chan_util_val = 255;
+	if (config.max_chan_util_val < 0)
+		config.max_chan_util_val = 0;
+	if (config.max_chan_util_val > 255)
+		config.max_chan_util_val = 255;
+	if (config.chan_util_val && config.max_chan_util_val &&
+	    config.chan_util_val > config.max_chan_util_val)
+		config.max_chan_util_val = config.chan_util_val;
+	if (!config.chan_util_avg_period)
+		config.chan_util_avg_period = 1;
+	if (config.load_kick_threshold > 100)
+		config.load_kick_threshold = 100;
 }
 
 bool uci_session_open(struct uci_session *s, const char *package)

@@ -312,7 +312,7 @@ netifd пересоздаёт порты. Кабельная цепочка из
 | `networks[]` | `id`, `ssid`, `encryption`, `key`, `network`, `bands`, `roaming`, `hidden`, `isolate`, `segment`, `vid` | все точки доступа контроллера, сгруппированные по имени сети |
 | `networks_sum` | отпечаток набора сетей | вычисляется по тому же набору полей |
 | `global` | `mobility_domain`, `band_steering`, `prefer_band`, `fast_transition`, `ft_over_ds`, `neighbor_reports`, `bss_transition` | действующая конфигурация демона (`ubus call roamd config`) |
-| `policy` | все пороги и тайминги, `deny_probe`, `allow_kick`, `steer_retries`, `log_level` | действующая конфигурация демона |
+| `policy` | все пороги и тайминги, в том числе `bandwidth_threshold`, `use_station_count`, `max_station_diff`, `load_balancing_threshold`, `chan_util_val`, `max_chan_util_val`, `chan_util_avg_period`, `load_kick_threshold`, `load_kick_min_clients`, `initial_connect_delay`, а также `deny_probe`, `allow_kick`, `steer_retries`, `log_level` | действующая конфигурация демона |
 | `backhaul` | `backhaul_enabled`, `backhaul_ssid`, `backhaul_key`, `ft_key`, `ft_kh`, `wifi_shutdown`, `backhaul_delta`, `backhaul_min_signal`, `backhaul_parents` | `roamd.mesh`; таблица родителей — из `iwinfo` контроллера и отчётов узлов (раздел 6), держатели ключей 802.11r — раздел 8 |
 | `devices[]` | `mac`, `band`, `nodes[]` | секции `roamd.device` |
 | `system` | `timezone`, `zonename` | `system.@system[0]` |

@@ -205,6 +205,66 @@ msgstr "Интервал запроса маяков"
 msgid "Milliseconds between 802.11k measurements of the other band."
 msgstr "Миллисекунды между измерениями другого диапазона по 802.11k."
 
+msgid "Receive rate limit"
+msgstr "Порог скорости приёма"
+
+msgid "Do not steer a client while the receive rate on its current access point stays above this many Mbit/s. 0 turns the check off."
+msgstr "Не переводить клиента, пока скорость приёма на текущей точке выше этого числа Мбит/с. 0 — проверка выключена."
+
+msgid "Prefer the less crowded access point"
+msgstr "Предпочитать менее загруженную точку"
+
+msgid "When the signal is a tie, choose the access point with fewer connected clients."
+msgstr "Если сигнал одинаковый, выбирать точку, к которой подключено меньше клиентов."
+
+msgid "Client-count difference"
+msgstr "Разница в числе клиентов"
+
+msgid "The other access point wins that tie only when it has more than this many fewer clients. The client itself is not counted on its current access point."
+msgstr "Другая точка побеждает при равенстве, только если клиентов на ней меньше и разница больше этого числа. Сам клиент на текущей точке не считается."
+
+msgid "Load-balance difference"
+msgstr "Порог балансировки"
+
+msgid "Ask a client to move when another access point has at least this many fewer clients and the signal there is not worse. 0 turns this off."
+msgstr "Просить клиента перейти на точку, где клиентов меньше хотя бы на это число, если сигнал там не хуже. 0 — выключено."
+
+msgid "Quiet channel"
+msgstr "Тихий канал"
+
+msgid "Channel utilization at or below this (0–255, as hostapd reports it) counts as a quiet channel when the signal is a tie."
+msgstr "Загрузка канала не выше этого значения (0–255, как её отдаёт hostapd) считается тихим каналом, когда сигнал одинаковый."
+
+msgid "Busy channel"
+msgstr "Занятый канал"
+
+msgid "Channel utilization above this (0–255) makes an access point a worse target. A small signal gain does not move a client there, and a client on a channel this busy may be asked to move to a quieter one."
+msgstr "Загрузка канала выше этого значения (0–255) делает точку худшей целью. Ради небольшого выигрыша в сигнале туда не переводят, а с такого канала клиента могут попросить уйти на более свободный."
+
+msgid "Utilization average"
+msgstr "Усреднение загрузки"
+
+msgid "How many hostapd samples to average before the channel-utilization figure is updated."
+msgstr "Сколько отсчётов hostapd усреднять, прежде чем обновить цифру загрузки канала."
+
+msgid "Channel load limit"
+msgstr "Предел загрузки канала"
+
+msgid "Also treat a channel as busy when its utilization is above this percent and it has at least the minimum number of clients. The client is asked to move, not disconnected. 0 turns this off."
+msgstr "Считать канал занятым, если его загрузка выше этого процента и клиентов не меньше минимума. Клиента просят перейти, а не отключают. 0 — выключено."
+
+msgid "Clients before load matters"
+msgstr "Клиентов до учёта загрузки"
+
+msgid "The channel-load percent is ignored until the access point has at least this many clients."
+msgstr "Процент загрузки канала не учитывают, пока на точке меньше этого числа клиентов."
+
+msgid "Probe response delay"
+msgstr "Задержка ответа на поиск"
+
+msgid "Milliseconds to wait before answering probes from a client that has just been heard, so neighbouring access points hear it too. Authentication and association are not delayed. 0 answers at once."
+msgstr "Сколько миллисекунд не отвечать на probe только что услышанного клиента, чтобы его услышали и соседние точки. Аутентификацию и ассоциацию это не задерживает. 0 — отвечать сразу."
+
 msgid "Log level"
 msgstr "Уровень журнала"
 

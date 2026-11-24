@@ -37,7 +37,10 @@ static const char *const policy_opts[] = {
 	"rssi_good", "rssi_low", "rssi_diff", "node_rssi_diff", "kick_rssi",
 	"hold_time", "age_time", "check_time_low", "check_time_high", "poll_interval",
 	"deny_time", "deny_probe", "allow_kick", "steer_retries", "beacon_req_interval",
-	"log_level"
+	"log_level", "bandwidth_threshold", "use_station_count", "max_station_diff",
+	"load_balancing_threshold", "chan_util_val", "max_chan_util_val",
+	"chan_util_avg_period", "load_kick_threshold", "load_kick_min_clients",
+	"initial_connect_delay"
 };
 
 static const char *root_str(struct blob_buf *doc, const char *name)

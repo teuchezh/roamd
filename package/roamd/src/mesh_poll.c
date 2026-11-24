@@ -33,8 +33,10 @@ struct poll_sta {
 	char ssid[MESH_SSID_MAX];
 	int signal;
 	uint32_t connected;
+	uint32_t rx_kbit;
 	uint8_t band;
 	bool client;
+	bool rx_known;
 	struct poll_meas meas[ROAMD_MEAS_MAX];
 	unsigned int n_meas;
 };
@@ -44,6 +46,10 @@ struct poll_ap {
 	char ssid[MESH_SSID_MAX];
 	char band[4];
 	char nr[POLL_NR_MAX];
+	int util;
+	int stations;
+	bool util_known;
+	bool stations_known;
 };
 
 struct poll_node {
@@ -232,6 +238,10 @@ static void sta_collect(struct poll_node *n, struct blob_attr *list, bool client
 		s->connected = client ? attr_u32(cur, "connected") : 0;
 		s->band = mesh_band_bit(attr_str(cur, "band"));
 		s->client = client;
+		if (client && attr_field(cur, "rx_rate", BLOBMSG_TYPE_INT32)) {
+			s->rx_kbit = attr_u32(cur, "rx_rate");
+			s->rx_known = true;
+		}
 
 		if (client)
 			meas_collect(s, attr_field(cur, "measured", BLOBMSG_TYPE_ARRAY));
@@ -268,6 +278,14 @@ static void ap_collect(struct poll_node *n, struct blob_attr *list)
 		nr = attr_str(cur, "nr");
 		if (nr)
 			snprintf(a->nr, sizeof(a->nr), "%s", nr);
+		if (attr_field(cur, "utilization", BLOBMSG_TYPE_INT32)) {
+			a->util = (int)attr_u32(cur, "utilization");
+			a->util_known = true;
+		}
+		if (attr_field(cur, "stations", BLOBMSG_TYPE_INT32)) {
+			a->stations = (int)attr_u32(cur, "stations");
+			a->stations_known = true;
+		}
 	}
 }
 
@@ -924,20 +942,84 @@ static const struct poll_node *bss_owner(const char *bssid, const char *ssid, ui
 	return NULL;
 }
 
+static void node_air(const struct poll_node *n, const char *ssid, uint8_t band,
+		     struct roam_air *out)
+{
+	unsigned int i;
+
+	out->util = -1;
+	out->stations = -1;
+
+	if (!n || !ssid)
+		return;
+
+	for (i = 0; i < n->n_ap; i++) {
+		const struct poll_ap *a = &n->ap[i];
+
+		if (strcmp(a->ssid, ssid) || mesh_band_bit(a->band) != band)
+			continue;
+
+		if (a->util_known)
+			out->util = a->util;
+		if (a->stations_known)
+			out->stations = a->stations;
+
+		return;
+	}
+}
+
+/* signals are close when they differ by less than node_rssi_diff */
+static bool place_better(int sig, const struct roam_air *air,
+			 int sig_new, const struct roam_air *air_new)
+{
+	int gain = sig_new - sig;
+	int rank = roam_air_rank(air_new) - roam_air_rank(air);
+
+	if (gain >= config.node_rssi_diff) {
+		if (roam_air_busy(air_new) && !roam_air_busy(air) &&
+		    gain < config.rssi_diff)
+			return false;
+
+		return true;
+	}
+
+	if (gain <= -config.node_rssi_diff)
+		return false;
+
+	if (rank > 0)
+		return true;
+	if (rank < 0)
+		return false;
+	if (roam_air_lighter(air, air_new) && !roam_air_lighter(air_new, air))
+		return true;
+	if (roam_air_lighter(air_new, air) && !roam_air_lighter(air, air_new))
+		return false;
+	if (roam_air_fewer_stations(air, air_new))
+		return true;
+	if (roam_air_fewer_stations(air_new, air))
+		return false;
+
+	return gain > 0;
+}
+
 /*
  * Best other device by the client's own beacon reports. Needs the client's
  * measurement of its current BSS as well, so both sides are seen the same way.
+ * Channel utilization and station count break a close call and can refuse a
+ * busier target.
  */
 static const struct poll_node *best_measured(const struct poll_sta *c, const struct poll_node *home,
 					     int *best_signal, int *home_signal)
 {
 	const struct poll_node *best = NULL;
+	struct roam_air best_air = { .util = -1, .stations = -1 };
 	enum roam_band rb = mesh_band_from_bit(c->band);
 	bool have_home = false;
 	unsigned int i;
 
 	for (i = 0; i < c->n_meas; i++) {
 		const struct poll_node *n = bss_owner(c->meas[i].bssid, c->ssid, c->band);
+		struct roam_air air;
 		int signal = c->meas[i].signal;
 
 		if (!n)
@@ -953,9 +1035,11 @@ static const struct poll_node *best_measured(const struct poll_sta *c, const str
 		if (!n->online || roam_admit(c->addr, n->id, rb) != ADMIT_OK)
 			continue;
 
-		if (!best || signal > *best_signal) {
+		node_air(n, c->ssid, c->band, &air);
+		if (!best || place_better(*best_signal, &best_air, signal, &air)) {
 			best = n;
 			*best_signal = signal;
+			best_air = air;
 		}
 	}
 
@@ -970,8 +1054,11 @@ static void steer_client(unsigned int from, unsigned int to, unsigned int client
 	uint8_t band = c->band;
 	enum roam_band rb = mesh_band_from_bit(band);
 	const struct poll_node *best = NULL;
-	int best_signal = 0, home_signal = 0;
+	struct roam_air best_air = { .util = -1, .stations = -1 };
+	struct roam_air home_air, cand_air;
+	int best_signal = 0, home_signal = 0, gain;
 	const char *source = "heard";
+	bool signal_move;
 	char args[1024], list[768];
 
 	if (!net_roaming(ssid))
@@ -991,22 +1078,53 @@ static void steer_client(unsigned int from, unsigned int to, unsigned int client
 		    roam_admit(c->addr, n->id, rb) != ADMIT_OK)
 			continue;
 
-		if (!best || s->signal > best_signal) {
-			best = n;
-			best_signal = s->signal;
+		if (refs[k].node == home) {
+			home_signal = s->signal;
+			continue;
 		}
 
-		if (refs[k].node == home)
-			home_signal = s->signal;
+		node_air(n, ssid, band, &cand_air);
+		if (!best || place_better(best_signal, &best_air, s->signal, &cand_air)) {
+			best = n;
+			best_signal = s->signal;
+			best_air = cand_air;
+		}
 	}
 
-	if (!best || best == &nodes[home])
+	if (!best)
 		return;
 
 decide:
-	if (roam_admit(c->addr, nodes[home].id, rb) == ADMIT_OK &&
-	    best_signal - home_signal < config.node_rssi_diff)
+	node_air(&nodes[home], ssid, band, &home_air);
+	node_air(best, ssid, band, &best_air);
+	gain = best_signal - home_signal;
+
+	signal_move = gain >= config.node_rssi_diff &&
+		      !(roam_air_busy(&best_air) && !roam_air_busy(&home_air) &&
+			gain < config.rssi_diff);
+
+	if (roam_admit(c->addr, nodes[home].id, rb) == ADMIT_OK && !signal_move) {
+		bool quieter = roam_air_busy(&home_air) && !roam_air_busy(&best_air) &&
+			       best_signal >= config.rssi_low &&
+			       (home_signal == ROAMD_NO_SIGNAL ||
+				best_signal + config.rssi_diff >= home_signal);
+		bool lighter = roam_air_lighter(&home_air, &best_air) &&
+			       !roam_air_busy(&best_air) &&
+			       best_signal >= config.rssi_low &&
+			       (home_signal == ROAMD_NO_SIGNAL || best_signal >= home_signal);
+
+		if (!quieter && !lighter)
+			return;
+
+		source = "less loaded";
+	}
+
+	if (roam_policy_rate_busy(c->rx_kbit, c->rx_known)) {
+		roam_log(ROAM_L_DEBUG,
+			 "mesh: %s receives %u Mbit/s on %s, not moving",
+			 mac, c->rx_kbit / 1000, nodes[home].id);
 		return;
+	}
 
 	list[0] = 0;
 	if (!neighbor_list(best, c->addr, ssid, band, list, sizeof(list)))

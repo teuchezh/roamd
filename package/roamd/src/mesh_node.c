@@ -2100,6 +2100,13 @@ bool mesh_node_steer(const char *macstr, const char *node, struct blob_attr *nei
 	if (!sta || !sta->bss || !roam_policy_can_steer(sta))
 		return false;
 
+	if (roam_policy_rate_busy(sta->rx_rate_kbit, sta->rx_rate_known)) {
+		roam_log(ROAM_L_DEBUG,
+			 "mesh: %s receives %u Mbit/s, not steering",
+			 sta->mac, sta->rx_rate_kbit / 1000);
+		return false;
+	}
+
 	if (!sta->btm) {
 		if (!config.allow_kick)
 			return false;
@@ -2336,6 +2343,8 @@ void mesh_node_report(struct blob_buf *b)
 
 				blobmsg_add_u32(b, "signal", sta->band[sta->bss->band].signal);
 				blobmsg_add_string(b, "ssid", sta->bss->ssid);
+				if (sta->rx_rate_known)
+					blobmsg_add_u32(b, "rx_rate", sta->rx_rate_kbit);
 
 				for (band = 0; band < BAND_MAX; band++) {
 					uint32_t age = 0;
