@@ -38,17 +38,49 @@ static void provision_run(struct uloop_timeout *t)
 
 const char *roam_band_name(enum roam_band band)
 {
-	return band == BAND_LOW ? "2.4" : "5";
+	switch (band) {
+	case BAND_LOW:
+		return "2.4";
+	case BAND_6:
+		return "6";
+	default:
+		return "5";
+	}
 }
 
 uint8_t roam_band_bit(enum roam_band band)
 {
-	return band == BAND_LOW ? MESH_BAND_24 : MESH_BAND_5;
+	switch (band) {
+	case BAND_LOW:
+		return MESH_BAND_24;
+	case BAND_6:
+		return MESH_BAND_6;
+	default:
+		return MESH_BAND_5;
+	}
 }
 
-static enum roam_band band_from_freq(int freq)
+enum roam_band roam_band_from_freq(int freq)
 {
-	return freq < 3000 ? BAND_LOW : BAND_HIGH;
+	/* 5 GHz channel centers stay below 5925; 6 GHz starts there. */
+	if (freq < 3000)
+		return BAND_LOW;
+	if (freq >= 5925)
+		return BAND_6;
+
+	return BAND_HIGH;
+}
+
+const char *roam_signal_field(enum roam_band band, bool age)
+{
+	switch (band) {
+	case BAND_LOW:
+		return age ? "signal_24_age" : "signal_24";
+	case BAND_6:
+		return age ? "signal_6_age" : "signal_6";
+	default:
+		return age ? "signal_5_age" : "signal_5";
+	}
 }
 
 int roam_bss_invoke(struct roam_bss *bss, const char *method, struct blob_buf *buf)
@@ -92,7 +124,7 @@ struct roam_bss *roam_bss_by_bssid(const uint8_t *bssid)
 
 struct roam_bss *roam_bss_target(const struct roam_bss *from)
 {
-	struct roam_bss *bss;
+	struct roam_bss *bss, *low = NULL, *high = NULL, *six = NULL, *other = NULL;
 
 	list_for_each_entry(bss, &roam_bss_list, list) {
 		if (bss == from || !roam_bss_matches(bss))
@@ -100,10 +132,33 @@ struct roam_bss *roam_bss_target(const struct roam_bss *from)
 		if (bss->band == from->band || strcmp(bss->ssid, from->ssid))
 			continue;
 
-		return bss;
+		if (!other)
+			other = bss;
+		if (bss->band == BAND_LOW)
+			low = bss;
+		else if (bss->band == BAND_6)
+			six = bss;
+		else if (bss->band == BAND_HIGH)
+			high = bss;
 	}
 
-	return NULL;
+	/* 6 GHz is its own band. Prefer the configured 2.4/5 partner, then 6. */
+	if (from->band != BAND_HIGH && config.prefer != PREFER_LOW && high)
+		return high;
+	if (from->band != BAND_LOW && config.prefer == PREFER_LOW && low)
+		return low;
+	if (from->band == BAND_HIGH && low)
+		return low;
+	if (from->band == BAND_LOW && high)
+		return high;
+	if (from->band != BAND_6 && six)
+		return six;
+	if (from->band != BAND_HIGH && high)
+		return high;
+	if (from->band != BAND_LOW && low)
+		return low;
+
+	return other;
 }
 
 static void status_cb(struct ubus_request *req, int type, struct blob_attr *msg)
@@ -144,7 +199,7 @@ static void status_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 
 	if (tb[ST_FREQ]) {
 		bss->freq = blobmsg_get_u32(tb[ST_FREQ]);
-		bss->band = band_from_freq(bss->freq);
+		bss->band = roam_band_from_freq(bss->freq);
 	}
 
 	if (tb[ST_CHANNEL])
@@ -370,9 +425,14 @@ static void sta_query_free(struct sta_query *q)
 	free(q);
 }
 
+static void security_query_done(const struct sta_query *q, const char *security);
+
 static void sta_query_expired(struct uloop_timeout *t)
 {
-	sta_query_free(container_of(t, struct sta_query, timeout));
+	struct sta_query *q = container_of(t, struct sta_query, timeout);
+
+	security_query_done(q, NULL);
+	sta_query_free(q);
 }
 
 static const char *sta_reply_security(const char *reply)
@@ -388,24 +448,44 @@ static const char *sta_reply_security(const char *reply)
 	return akm_security(atoi(wpa + 5), (o1 << 16) | (o2 << 8) | o3, suite);
 }
 
+static void security_query_done(const struct sta_query *q, const char *security)
+{
+	struct roam_sta *sta = roam_sta_get(q->addr, false);
+
+	if (!sta || sta->connected_since != q->since || sta->security_wait != q->since)
+		return;
+
+	sta->security_pending = false;
+	sta->security_wait = 0;
+
+	if (security) {
+		sta->security = security;
+		sta->security_since = q->since;
+		return;
+	}
+
+	/* A missed socket, a timeout or an unparsed reply must be asked again. */
+	sta->security = NULL;
+	sta->security_since = 0;
+}
+
 static void sta_query_reply(struct uloop_fd *fd, unsigned int events)
 {
 	struct sta_query *q = container_of(fd, struct sta_query, fd);
 	char reply[4096];
 	ssize_t got = recv(fd->fd, reply, sizeof(reply) - 1, 0);
-	struct roam_sta *sta;
 
 	if (got > 0) {
 		reply[got] = 0;
-		sta = roam_sta_get(q->addr, false);
-		if (sta && sta->security_since == q->since)
-			sta->security = sta_reply_security(reply);
+		security_query_done(q, sta_reply_security(reply));
+	} else {
+		security_query_done(q, NULL);
 	}
 
 	sta_query_free(q);
 }
 
-void roam_bss_sta_security_query(const struct roam_bss *bss, const uint8_t *addr, uint64_t since)
+bool roam_bss_sta_security_query(const struct roam_bss *bss, const uint8_t *addr, uint64_t since)
 {
 	static unsigned int seq;
 	struct sockaddr_un dest = { .sun_family = AF_UNIX };
@@ -415,16 +495,16 @@ void roam_bss_sta_security_query(const struct roam_bss *bss, const uint8_t *addr
 	int len;
 
 	if (stat(HOSTAPD_CTRL_DIR, &dir))
-		return;
+		return false;
 
 	q = calloc(1, sizeof(*q));
 	if (!q)
-		return;
+		return false;
 
 	q->fd.fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
 	if (q->fd.fd < 0) {
 		free(q);
-		return;
+		return false;
 	}
 
 	q->fd.cb = sta_query_reply;
@@ -447,11 +527,13 @@ void roam_bss_sta_security_query(const struct roam_bss *bss, const uint8_t *addr
 		close(q->fd.fd);
 		unlink(q->local.sun_path);
 		free(q);
-		return;
+		return false;
 	}
 
 	uloop_fd_add(&q->fd, ULOOP_READ);
 	uloop_timeout_set(&q->timeout, HOSTAPD_CTRL_TIMEOUT);
+
+	return true;
 }
 
 static void bss_enable_management(struct roam_bss *bss);

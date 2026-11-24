@@ -26,8 +26,14 @@ static uint8_t band_of(struct uci_context *ctx, struct uci_section *s)
 	const char *hwmode = uci_lookup_option_string(ctx, s, "hwmode");
 	const char *channel = uci_lookup_option_string(ctx, s, "channel");
 
-	if (band)
-		return band[0] == '2' ? MESH_BAND_24 : MESH_BAND_5;
+	if (band) {
+		if (band[0] == '2')
+			return MESH_BAND_24;
+		if (band[0] == '6')
+			return MESH_BAND_6;
+
+		return MESH_BAND_5;
+	}
 
 	if (hwmode)
 		return strstr(hwmode, "g") && !strstr(hwmode, "a") ? MESH_BAND_24 : MESH_BAND_5;
