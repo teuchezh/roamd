@@ -1,0 +1,282 @@
+/* Status layout for luci-app-roamd. Uses the active LuCI theme's colors. */
+
+.roamd-summary {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+	margin: 0 0 0.85rem;
+}
+
+.roamd-stat {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	min-width: 5.6rem;
+	flex: 1 1 5.6rem;
+	padding: 0.35rem 0.6rem;
+	border: 1px solid var(--border-color-medium, #d5d5d5);
+	border-radius: 4px;
+	background: var(--background-color-high, #fff);
+}
+
+.roamd-k {
+	color: var(--text-color-medium, #666);
+	font-size: 0.75rem;
+	line-height: 1.2;
+}
+
+.roamd-v,
+.roamd-where-name {
+	font-weight: 600;
+	line-height: 1.3;
+	overflow-wrap: anywhere;
+}
+
+.roamd-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 17.5rem), 1fr));
+	gap: 0.55rem;
+	margin: 0.35rem 0 0.9rem;
+}
+
+.roamd-card {
+	min-width: 0;
+	padding: 0.6rem 0.7rem 0.65rem;
+	border: 1px solid var(--border-color-medium, #d5d5d5);
+	border-radius: 4px;
+	background: var(--background-color-high, #fff);
+}
+
+.roamd-card-controller {
+	border-color: var(--primary-color-medium, #5b7c99);
+}
+
+.roamd-card-off {
+	opacity: 0.78;
+}
+
+.roamd-card-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 0.5rem;
+}
+
+.roamd-card-id {
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.roamd-title {
+	font-weight: 600;
+	line-height: 1.3;
+	overflow-wrap: anywhere;
+}
+
+.roamd-sub,
+.roamd-muted {
+	color: var(--text-color-low, #777);
+	font-size: 0.82rem;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.roamd-pills {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem;
+	margin-top: 0.3rem;
+}
+
+.roamd-pill {
+	display: inline-block;
+	max-width: 100%;
+	padding: 0.05rem 0.4rem;
+	border-radius: 2px;
+	background: var(--background-color-low, #eee);
+	color: var(--text-color-high, #333);
+	font-size: 0.78rem;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
+.roamd-pill-band2,
+.roamd-pill-band5,
+.roamd-pill-band6 {
+	font-weight: 600;
+	background: transparent;
+	border: 1px solid var(--border-color-high, #aaa);
+}
+
+.roamd-pill-band2 { border-color: #3d6b99; }
+.roamd-pill-band5 { border-color: #2f7d4a; }
+.roamd-pill-band6 { border-color: #6b4c9a; }
+.roamd-pill-warn { color: #8a5a00; }
+
+.roamd-state { font-weight: 600; white-space: nowrap; }
+.roamd-state-ok { color: #1f7a34; }
+.roamd-state-warn { color: #a16207; }
+.roamd-state-bad { color: #b42318; }
+.roamd-state-off { color: #888; font-weight: 600; }
+
+.roamd-dot {
+	display: inline-block;
+	width: 0.55rem;
+	height: 0.55rem;
+	margin-right: 0.35rem;
+	border-radius: 50%;
+	vertical-align: 0.05rem;
+}
+
+.roamd-where {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 0.6rem;
+	margin: 0.45rem 0 0.15rem;
+	padding: 0.4rem 0.5rem;
+	border-radius: 3px;
+	background: var(--background-color-medium, #f4f4f4);
+}
+
+.roamd-band {
+	flex: 0 0 auto;
+	font-size: 0.95rem;
+	font-weight: 700;
+	line-height: 1.2;
+	white-space: nowrap;
+}
+
+.roamd-band-2 { color: #24598a; }
+.roamd-band-5 { color: #1d6b38; }
+.roamd-band-6 { color: #643d96; }
+.roamd-band-wire { color: var(--text-color-high, #333); font-weight: 600; }
+
+.roamd-facts {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 0.18rem 0.7rem;
+	margin: 0.45rem 0 0;
+	font-size: 0.88rem;
+}
+
+.roamd-facts dt {
+	margin: 0;
+	color: var(--text-color-medium, #666);
+}
+
+.roamd-facts dd {
+	margin: 0;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.roamd-roam {
+	margin-top: 0.45rem;
+}
+
+.roamd-clients-label {
+	margin-top: 0.55rem;
+	color: var(--text-color-medium, #666);
+	font-size: 0.75rem;
+}
+
+.roamd-sta {
+	margin-top: 0.35rem;
+	padding-top: 0.4rem;
+	border-top: 1px solid var(--border-color-low, #e4e4e4);
+}
+
+.roamd-card-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+	margin-top: 0.55rem;
+}
+
+.roamd-group {
+	margin: 0.15rem 0 0.35rem;
+}
+
+.roamd-group-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.35rem 0.55rem;
+	margin: 0.7rem 0 0.15rem;
+}
+
+.roamd-events {
+	margin-top: 0.2rem;
+}
+
+.roamd-event {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 0.15rem 0.75rem;
+	padding: 0.5rem 0.1rem;
+	border-bottom: 1px solid var(--border-color-low, #e4e4e4);
+}
+
+.roamd-event-meta {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 0.25rem 0.75rem;
+}
+
+.roamd-event-type {
+	font-weight: 600;
+}
+
+.roamd-route {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.15rem 0.4rem;
+}
+
+.roamd-arrow {
+	color: var(--text-color-low, #888);
+}
+
+.roamd-stale {
+	color: var(--text-color-low, #999);
+}
+
+.roamd-candidate {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.roamd-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.roamd-empty {
+	margin: 0.4rem 0 0.8rem;
+}
+
+@media (min-width: 720px) {
+	.roamd-event {
+		grid-template-columns: 11rem minmax(8rem, 0.7fr) minmax(0, 1.4fr);
+		align-items: center;
+	}
+}
+
+@media (max-width: 520px) {
+	.roamd-card-actions .btn {
+		flex: 1 1 auto;
+	}
+
+	.roamd-where {
+		align-items: flex-start;
+	}
+}

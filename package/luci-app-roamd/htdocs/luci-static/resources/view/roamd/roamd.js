@@ -24,10 +24,7 @@ function clientCell(mac) {
 }
 
 function toSigned(value) {
-	if (value === undefined || value === null)
-		return 0;
-
-	return (value > 0x7fffffff) ? value - 4294967296 : value;
+	return common.signed(value);
 }
 
 function formatSignal(value) {
@@ -55,22 +52,142 @@ var PAIR_STATE = {
 	broken: { text: _('no'), color: '#d33' }
 };
 
-function roamingCell(iface) {
+function countClients() {
+	var n = 0;
+
+	eachClient(function () { n++; });
+
+	return n;
+}
+
+function summaryStat(label, value) {
+	return E('div', { 'class': 'roamd-stat' }, [
+		E('span', { 'class': 'roamd-k' }, label),
+		E('span', { 'class': 'roamd-v' }, value)
+	]);
+}
+
+function renderSummary() {
+	var role = statusData.mesh_role || meshState.role;
+	var pref = statusData.prefer_band;
+	var prefText = (pref === '2' || pref === '2.4') ? _('2.4 GHz')
+		: (pref === '5' ? _('5 GHz')
+		: (pref === '6' ? _('6 GHz') : _('No preference')));
+	var stats = [];
+
+	if (role)
+		stats.push(summaryStat(_('Role'), role === 'node' ? _('node') : _('controller')));
+
+	stats.push(summaryStat(_('Roaming'), statusData.enabled ? _('yes') : _('no')));
+
+	if (statusData.band_steering)
+		stats.push(summaryStat(_('Preferred band'), prefText));
+
+	stats.push(summaryStat(_('Clients'), String(countClients())));
+
+	if (meshState.counts && meshState.counts.nodes != null && role !== 'node')
+		stats.push(summaryStat(_('Nodes'), String(meshState.counts.nodes)));
+
+	return E('div', { 'class': 'roamd-summary' }, stats);
+}
+
+function clientBlock(mac, client) {
+	var bands = client.bands || {};
+	var names = [];
+	var perBand = [];
+
+	for (var b in bands)
+		if (bands[b].seen)
+			names.push(b);
+
+	/* 2, then 5, then 6, so a 6 GHz reading is not tucked into the 5 GHz pill. */
+	names.sort(function(a, c) {
+		return common.bandKind(a) < common.bandKind(c) ? -1 : 1;
+	});
+
+	for (var i = 0; i < names.length; i++)
+		perBand.push(common.pill(
+			'%s %s'.format(common.bandLabel(names[i]), formatSignal(bands[names[i]].signal)),
+			'band' + common.bandKind(names[i])));
+
+	return E('div', { 'class': 'roamd-sta' }, [
+		clientCell(mac),
+		E('div', { 'class': 'roamd-pills' }, [
+			common.pill(formatSignal(client.signal)),
+			common.pill('%t'.format(client.connected || 0)),
+			common.pill('802.11v %s'.format(client.btm ? _('yes') : _('no'))),
+			common.pill('802.11k %s'.format(client.rrm ? _('yes') : _('no'))),
+			common.pill('%s %d'.format(_('Steering attempts'), client.steer_count || 0))
+		]),
+		perBand.length
+			? E('div', { 'class': 'roamd-pills' }, perBand)
+			: E('div', { 'class': 'roamd-muted' }, '%s: %s'.format(_('Signal per band'), _('unknown')))
+	]);
+}
+
+function ifaceCard(name, iface) {
 	var info = iface.roaming || {};
 	var state = PAIR_STATE[info.state] || PAIR_STATE.broken;
 	var issues = info.issues || [];
-	var lines = [
-		E('span', { 'style': 'color:%s;font-weight:bold'.format(state.color) }, state.text)
+	var clients = [];
+	var cmap = iface.clients || {};
+	var kind = info.state === 'ok' ? 'ok' : (info.state === 'degraded' ? 'warn' : 'bad');
+	var roam = [
+		E('span', { 'class': 'roamd-state roamd-state-' + kind }, state.text)
 	];
 
 	if (info.peer && !issues.length)
-		lines.push(E('small', {}, [ E('br'), _('paired with %s').format(info.peer) ]));
+		roam.push(E('div', { 'class': 'roamd-muted' }, _('paired with %s').format(info.peer)));
 
 	issues.forEach(function (code) {
-		lines.push(E('small', {}, [ E('br'), PAIR_TEXT[code] || code ]));
+		roam.push(E('div', { 'class': 'roamd-muted' }, PAIR_TEXT[code] || code));
 	});
 
-	return E('span', {}, lines);
+	for (var mac in cmap)
+		clients.push(clientBlock(mac, cmap[mac]));
+
+	return E('article', { 'class': 'roamd-card' + (iface.active ? '' : ' roamd-card-off') }, [
+		E('div', { 'class': 'roamd-card-head' }, [
+			E('div', { 'class': 'roamd-card-id' }, [
+				E('div', { 'class': 'roamd-title' }, iface.ssid || name),
+				iface.ssid ? E('div', { 'class': 'roamd-sub' }, name) : ''
+			]),
+			E('span', {
+				'class': iface.active ? 'roamd-state roamd-state-ok' : 'roamd-state roamd-state-off'
+			}, iface.active ? _('running') : _('down'))
+		]),
+		E('div', { 'class': 'roamd-pills' }, [
+			common.pill(common.bandLabel(iface.band), 'band' + common.bandKind(iface.band)),
+			common.pill('%s %s'.format(_('Channel'), iface.channel || '-'))
+		]),
+		E('div', { 'class': 'roamd-roam' }, [
+			E('div', { 'class': 'roamd-k' }, _('Roaming')),
+			E('div', {}, roam)
+		]),
+		E('div', { 'class': 'roamd-clients-label' },
+			'%s · %d'.format(_('Clients'), clients.length)),
+		clients.length
+			? E('div', {}, clients)
+			: E('div', { 'class': 'roamd-muted' }, _('No connected clients'))
+	]);
+}
+
+function renderBoard() {
+	var ifaces = statusData.interfaces || {};
+	var names = [];
+
+	for (var name in ifaces)
+		names.push(name);
+
+	return E('div', {}, [
+		renderSummary(),
+		E('h3', {}, _('Wireless interfaces')),
+		names.length
+			? E('div', { 'class': 'roamd-grid' }, names.map(function (name) {
+				return ifaceCard(name, ifaces[name]);
+			}))
+			: E('div', { 'class': 'roamd-empty' }, E('em', {}, _('No wireless interfaces found')))
+	]);
 }
 
 function eachClient(callback) {
@@ -84,80 +201,6 @@ function eachClient(callback) {
 	}
 }
 
-function renderInterfaces() {
-	var ifaces = statusData.interfaces || {};
-	var rows = [];
-
-	for (var name in ifaces) {
-		var i = ifaces[name];
-
-		rows.push([
-			name,
-			i.ssid || '-',
-			common.bandLabel(i.band),
-			i.channel || '-',
-			i.active ? _('running') : _('down'),
-			roamingCell(i)
-		]);
-	}
-
-	var table = E('table', { 'class': 'table cbi-section-table' }, [
-		E('tr', { 'class': 'tr table-titles' }, [
-			E('th', { 'class': 'th' }, _('Interface')),
-			E('th', { 'class': 'th' }, _('SSID')),
-			E('th', { 'class': 'th' }, _('Band')),
-			E('th', { 'class': 'th' }, _('Channel')),
-			E('th', { 'class': 'th' }, _('State')),
-			E('th', { 'class': 'th' }, _('Roaming'))
-		])
-	]);
-
-	cbi_update_table(table, rows, E('em', {}, _('No wireless interfaces found')));
-
-	return table;
-}
-
-function renderClients() {
-	var rows = [];
-
-	eachClient(function (mac, client, ifname, iface) {
-		var bands = client.bands || {};
-		var perBand = [];
-
-		for (var b in bands) {
-			if (bands[b].seen)
-				perBand.push('%s: %s'.format(common.bandLabel(b), formatSignal(bands[b].signal)));
-		}
-
-		rows.push([
-			clientCell(mac),
-			'%s (%s)'.format(ifname, common.bandLabel(iface.band)),
-			formatSignal(client.signal),
-			'%t'.format(client.connected || 0),
-			perBand.length ? perBand.join(', ') : E('em', {}, _('unknown')),
-			client.btm ? _('yes') : _('no'),
-			client.rrm ? _('yes') : _('no'),
-			String(client.steer_count || 0)
-		]);
-	});
-
-	var table = E('table', { 'class': 'table cbi-section-table' }, [
-		E('tr', { 'class': 'tr table-titles' }, [
-			E('th', { 'class': 'th' }, _('Client')),
-			E('th', { 'class': 'th' }, _('Connected to')),
-			E('th', { 'class': 'th' }, _('Signal')),
-			E('th', { 'class': 'th' }, _('Uptime')),
-			E('th', { 'class': 'th' }, _('Signal per band')),
-			E('th', { 'class': 'th' }, '802.11v'),
-			E('th', { 'class': 'th' }, '802.11k'),
-			E('th', { 'class': 'th' }, _('Steering attempts'))
-		])
-	]);
-
-	cbi_update_table(table, rows, E('em', {}, _('No connected clients')));
-
-	return table;
-}
 
 var WIZARD_NETWORK = 'lan';
 var DEFAULT_SSID = 'OpenWrt';
@@ -181,7 +224,14 @@ function deviceBand(section) {
 }
 
 function bandGroup(band) {
-	return (band === '2g') ? 'low' : 'high';
+	if (band === '2g' || band === '2.4' || band === '2')
+		return 'low';
+
+	/* 6 GHz is its own band. It is not a 5 GHz radio. */
+	if (band === '6g' || band === '6')
+		return 'six';
+
+	return 'high';
 }
 
 function bandTitle(band) {
@@ -231,7 +281,14 @@ function wizardProbe() {
 	if (!radios.length)
 		return { ok: false, reason: 'no_radio' };
 
-	if (!groups.low || !groups.high)
+	var bands = 0;
+
+	for (var group in groups)
+		if (groups[group])
+			bands++;
+
+	/* 2.4, 5 and 6 GHz each count. Two 5 GHz radios are still one band. */
+	if (bands < 2)
 		return { ok: false, reason: 'single_band', radios: radios };
 
 	return {
@@ -250,7 +307,7 @@ function probeMessage(reason) {
 	if (reason === 'no_radio')
 		return _('No wireless radios were found on this device.');
 
-	return _('This device has radios of one band only. Roaming between 2.4 GHz and 5 GHz needs at least two radios on different bands.');
+		return _('This device has radios of one band only. Roaming needs radios on at least two different bands (2.4, 5 or 6 GHz).');
 }
 
 function buildPlan(probe, ssid) {
@@ -469,11 +526,8 @@ function renderWizardButton() {
 
 function renderStatus() {
 	return E('div', {}, [
-		E('h3', {}, _('Wireless interfaces')),
-		E('div', { 'id': 'roamd-ifaces' }, renderInterfaces()),
-		common.isNode(meshState) ? '' : renderWizardButton(),
-		E('h3', {}, _('Clients')),
-		E('div', { 'id': 'roamd-clients' }, renderClients())
+		E('div', { 'id': 'roamd-ifaces' }, renderBoard()),
+		common.isNode(meshState) ? '' : renderWizardButton()
 	]);
 }
 
@@ -508,22 +562,19 @@ return view.extend({
 	render: function (data) {
 		var m, s, sub, o;
 
+		common.ensureStyle();
 		statusData = data[0] || {};
 		hostHints = data[1] || {};
 		meshState = data[2] || {};
 
 		poll.add(function () {
 			return callStatus().then(function (res) {
-				var ifaces = document.getElementById('roamd-ifaces');
-				var clients = document.getElementById('roamd-clients');
+				var board = document.getElementById('roamd-ifaces');
 
 				statusData = res || {};
 
-				if (ifaces)
-					dom.content(ifaces, renderInterfaces());
-
-				if (clients)
-					dom.content(clients, renderClients());
+				if (board)
+					dom.content(board, renderBoard());
 			});
 		}, 5);
 
