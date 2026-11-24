@@ -235,6 +235,15 @@ msgstr "Диапазон"
 msgid "Channel"
 msgstr "Канал"
 
+msgid "web"
+msgstr "веб"
+
+msgid "Scan"
+msgstr "Искать"
+
+msgid "All nodes"
+msgstr "Все узлы"
+
 msgid "State"
 msgstr "Состояние"
 

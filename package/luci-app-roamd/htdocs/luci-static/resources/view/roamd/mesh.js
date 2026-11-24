@@ -8,6 +8,28 @@
 'require uci';
 
 var nodeUiOpen = false;
+var clientFocus = '';
+var meshActivate = function() {};
+var refreshClients = function() {};
+
+function locationHash() {
+	try {
+		return String(location.hash || '').replace(/^#/, '');
+	} catch (e) {
+		return '';
+	}
+}
+
+function openClients(nodeId) {
+	clientFocus = nodeId || '';
+
+	try {
+		location.hash = clientFocus ? 'clients/' + encodeURIComponent(clientFocus) : 'clients';
+	} catch (e) {}
+
+	meshActivate('clients');
+	refreshClients();
+}
 
 var callMeshClients = rpc.declare({
 	object: 'roamd',
@@ -162,9 +184,7 @@ function nodeCell(node, band) {
 	if (!node && !band)
 		return '-';
 
-	var bandNode = band
-		? E('span', { 'class': 'roamd-band roamd-band-' + common.bandKind(band) }, common.bandLabel(band))
-		: '';
+	var bandNode = band ? common.bandLabel(band) : '';
 
 	return common.twoLine(E('span', {}, nodeTitle(node)), bandNode);
 }
@@ -353,30 +373,49 @@ function runJob(call, limit, done) {
 }
 
 function discoverDialog() {
-	var body = E('div', {}, [ E('p', { 'class': 'spinning' }, _('Scanning the local network…')) ]);
+	var wrap = E('div', {});
+	var cancel = function() { ui.hideModal(); };
 
-	ui.showModal(_('Add a new node'), [
-		body,
-		E('div', { 'class': 'right' }, [
-			E('button', { 'class': 'btn', 'click': function() { cancel(); } }, _('Close'))
-		])
-	]);
+	function help() {
+		dom.content(wrap, [
+			E('p', {}, _('To add a node: reset the new device to factory settings and make sure it has no administrator password.')),
+			E('p', {}, E('strong', {}, _('Connect a LAN port of the controller to a LAN port of the new device — not to its WAN port.'))),
+			E('p', { 'class': 'cbi-value-description' }, _('The controller needs root access to the device: SSH on port 22 without a password and, if the device has LuCI, port 80 open. Firmware where the root login is disabled or password-protected cannot be captured.')),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Cancel')),
+				' ',
+				E('button', { 'class': 'btn cbi-button-positive', 'click': scan }, _('Scan'))
+			])
+		]);
+	}
 
-	var cancel = runJob(callMeshDiscover, Infinity, function(res) {
-		if (!res) {
-			dom.content(body, E('p', { 'class': 'alert-message warning' }, _('Could not scan the local network.')));
-			return;
-		}
+	function scan() {
+		dom.content(wrap, [
+			E('p', { 'class': 'spinning' }, _('Scanning the local network…')),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'btn', 'click': function() { cancel(); } }, _('Close'))
+			])
+		]);
 
-		var list = res.candidates || [];
+		cancel = runJob(callMeshDiscover, Infinity, function(res) {
+			if (!res) {
+				dom.content(wrap, E('p', { 'class': 'alert-message warning' }, _('Could not scan the local network.')));
+				return;
+			}
 
-		if (!list.length) {
-			dom.content(body, E('p', {}, _('No devices found. Reset the new device to factory settings and make sure it has no password, then try again.')));
-			return;
-		}
+			var list = res.candidates || [];
 
-		dom.content(body, list.map(renderCandidate));
-	});
+			if (!list.length) {
+				dom.content(wrap, E('p', {}, _('No devices found. Reset the new device to factory settings and make sure it has no password, then try again.')));
+				return;
+			}
+
+			dom.content(wrap, list.map(renderCandidate));
+		});
+	}
+
+	ui.showModal(_('Add a new node'), [ wrap ]);
+	help();
 }
 
 var PKG_STATE_TEXT = {
@@ -561,19 +600,6 @@ function pollAcquire(task, body, misses, kind) {
 }
 
 function renderNodes(state) {
-	var intro = E('div', {}, [
-		E('p', {}, _('This device works as the Mesh Wi-Fi system controller.')),
-		E('p', {}, _('Add other OpenWrt devices to build one wireless system with central management and monitoring.')),
-		E('div', { 'style': 'border:1px solid #ccc;padding:8px;margin:8px 0;background:#f9f9f9' }, [
-			E('p', { 'style': 'margin:0 0 4px 0' }, _('To add a node: reset the new device to factory settings and make sure it has no administrator password.')),
-			E('p', { 'style': 'margin:4px 0' }, E('strong', { 'style': 'color:#c33' },
-				_('Connect a LAN port of the controller to a LAN port of the new device — not to its WAN port.'))),
-			E('p', { 'style': 'margin:4px 0 0 0' }, _('Then press "Add a new node" and capture the device that appears.'))
-		]),
-		E('p', { 'class': 'cbi-value-description' }, _('The controller needs root access to the device: SSH on port 22 without a password and, if the device has LuCI, port 80 open. Firmware where the root login is disabled or password-protected cannot be captured.')),
-		E('p', {}, '')
-	]);
-
 	var deps = state.deps_ready ? '' : E('div', { 'class': 'alert-message warning' }, [
 		E('strong', {}, _('Preparing the controller is not finished')),
 		E('div', {}, state.deps_state || _('the required packages are not installed yet')),
@@ -616,21 +642,42 @@ function renderNodes(state) {
 
 	var members = state.members || [];
 	var counts = state.counts || {};
+	var pref = '';
 	var cards = [ controllerCard(state) ].concat(members.map(function(m) {
 		return memberCard(m, state);
 	}));
 
+	try {
+		pref = uci.get('roamd', 'global', 'prefer_band') || '';
+	} catch (e) {}
+
 	return E('div', {}, [
-		deps, running, intro,
-		E('div', { 'class': 'roamd-toolbar' }, addButton),
-		E('div', { 'class': 'roamd-summary' }, [
-			summaryStat(_('Role'), _('controller')),
-			summaryStat(_('Status'), _('online')),
-			summaryStat(_('Nodes'), String(counts.nodes || 0)),
-			summaryStat(_('Clients'), String(counts.clients || 0))
+		deps, running,
+		E('div', { 'class': 'roamd-toolbar' }, [
+			E('p', { 'class': 'roamd-lead' }, [
+				'%s %s'.format(String(counts.nodes || 0), _('Nodes')),
+				' · ',
+				E('button', {
+					'class': 'roamd-link',
+					'click': function(ev) { ev.preventDefault(); openClients(''); }
+				}, '%s %s'.format(String(counts.clients || 0), _('Clients'))),
+				pref ? ' · ' + preferText(pref) : ''
+			]),
+			addButton
 		]),
 		E('div', { 'class': 'roamd-grid' }, cards)
 	]);
+}
+
+function preferText(pref) {
+	if (pref === '2' || pref === '2.4' || pref === 'low')
+		return _('2.4 GHz');
+	if (pref === '5' || pref === 'high')
+		return _('5 GHz');
+	if (pref === '6')
+		return _('6 GHz');
+
+	return _('No preference');
 }
 
 function summaryStat(label, value) {
@@ -695,6 +742,9 @@ function memberCard(m, state) {
 	if (m.update_available)
 		pills.push(E('span', { 'class': 'roamd-pill roamd-pill-warn' }, _('update available')));
 
+	if (m.seg_issue)
+		pills.push(E('span', { 'class': 'roamd-pill roamd-pill-warn' }, m.seg_issue));
+
 	return E('article', { 'class': 'roamd-card' + (online ? '' : ' roamd-card-off') }, [
 		E('div', { 'class': 'roamd-card-head' }, [
 			E('div', { 'class': 'roamd-card-id' }, [
@@ -704,16 +754,28 @@ function memberCard(m, state) {
 			statusMark(online)
 		]),
 		common.facts([
-			[ _('Client count'), String(m.client_count || 0) ],
+			[ _('Client count'), clientCountLink(m.id, m.client_count) ],
 			[ _('Throughput'), throughputValue(m, online) ],
 			[ _('Uptime'), m.uptime ? '%t'.format(m.uptime) : '—' ],
-			[ _('Via'), viaLabel(m, state) ],
+			[ _('Via'), (function() {
+				var via = viaLabel(m, state);
+				return (!via || via === '-') ? '—' : via;
+			})() ],
 			[ _('Connection'), connectionCell(m) ],
 			[ _('Roaming'), roamingValue(m) ]
 		]),
-		m.seg_issue ? E('div', { 'class': 'alert-message warning' }, m.seg_issue) : '',
 		E('div', { 'class': 'roamd-card-actions' }, action)
 	]);
+}
+
+function clientCountLink(id, count) {
+	return E('button', {
+		'class': 'roamd-link',
+		'click': function(ev) {
+			ev.preventDefault();
+			openClients(id);
+		}
+	}, String(count || 0));
 }
 
 function connectionCell(m) {
@@ -722,10 +784,11 @@ function connectionCell(m) {
 
 	var dbm = m.uplink_signal ? common.signed(m.uplink_signal) : 0;
 	var label = m.uplink_band
-		? E('span', { 'class': 'roamd-band roamd-band-' + common.bandKind(m.uplink_band) },
-			'%s %s'.format(_('Wi-Fi'), common.bandLabel(m.uplink_band)))
+		? '%s %s'.format(_('Wi-Fi'), common.bandLabel(m.uplink_band))
 		: _('Wi-Fi');
-	var head = dbm ? E('span', {}, [ label, ': %d %s'.format(dbm, _('dBm')) ]) : label;
+	var head = dbm
+		? E('span', {}, [ label + ': ', common.dbmText(m.uplink_signal, { serving: true }) ])
+		: label;
 
 	var parts = [];
 
@@ -820,9 +883,12 @@ function controllerCard(state) {
 			E('span', { 'class': 'roamd-state roamd-state-ok', 'title': _('this device') }, _('online'))
 		]),
 		common.facts([
-			[ _('Client count'), String(state.controller_clients || 0) ],
+			[ _('Client count'), clientCountLink('controller', state.controller_clients) ],
 			[ _('Throughput'), throughputValue(self, true) ],
-			[ _('Uptime'), self.uptime ? '%t'.format(self.uptime) : '—' ]
+			[ _('Uptime'), self.uptime ? '%t'.format(self.uptime) : '—' ],
+			[ _('Via'), '—' ],
+			[ _('Connection'), '—' ],
+			[ _('Roaming'), '—' ]
 		]),
 		E('div', { 'class': 'roamd-card-actions' }, check)
 	]);
@@ -912,9 +978,10 @@ function nameCell(m) {
 		'href': 'http://%s/'.format(m.addr),
 		'target': '_blank',
 		'rel': 'noreferrer',
+		'class': 'roamd-link',
 		'title': _('Open the node web interface'),
-		'style': 'text-decoration:none;margin-left:.4em'
-	}, '🌐') : '';
+		'style': 'margin-left:.4em'
+	}, _('web')) : '';
 
 	return common.twoLine(E('div', {}, [ E('strong', {}, alias), link ]), sys);
 }
@@ -1226,17 +1293,17 @@ function nodeChips(allNodes, allowed) {
 
 var SIGNAL_FRESH = 90;
 
-function signalLine(band, signal, age) {
-	var dbm = common.signed(signal);
+function signalLine(band, signal, age, serving) {
 	var stale = (age || 0) > SIGNAL_FRESH;
+	var dbm = common.signed(signal);
 
 	if (!dbm)
 		return '';
 
-	return E('div', {
-		'class': 'roamd-band roamd-band-' + common.bandKind(band) + (stale ? ' roamd-stale' : '')
-	}, '%s — %d %s'.format(common.bandLabel(band), dbm, _('dBm')) +
-		(stale ? ' (' + _('stale') + ')' : ''));
+	return E('div', {}, [
+		common.bandLabel(band) + ' — ',
+		common.dbmText(signal, { serving: serving, stale: stale })
+	]);
 }
 
 /* 6 GHz has its own RSSI slot. It is not drawn on the 5 GHz line. */
@@ -1244,10 +1311,14 @@ function signalBlock(c) {
 	if (!c || (!c.signal_24 && !c.signal_5 && !c.signal_6))
 		return null;
 
+	function serving(band) {
+		return common.bandKind(c.band) === common.bandKind(band);
+	}
+
 	return E('div', {}, [
-		signalLine('2.4', c.signal_24, c.signal_24_age),
-		signalLine('5', c.signal_5, c.signal_5_age),
-		signalLine('6', c.signal_6, c.signal_6_age)
+		signalLine('2.4', c.signal_24, c.signal_24_age, serving('2.4')),
+		signalLine('5', c.signal_5, c.signal_5_age, serving('5')),
+		signalLine('6', c.signal_6, c.signal_6_age, serving('6'))
 	]);
 }
 
@@ -1267,8 +1338,7 @@ function clientDialog(c, hints, ov, nodeName, allNodes, refresh) {
 	var ip4 = hintIp4(hints, c.mac);
 	var conn = !clientSeen(c) ? _('offline')
 		: c.wired ? _('Cable')
-		: E('span', { 'class': 'roamd-band roamd-band-' + common.bandKind(c.band) },
-			_('Wi-Fi %s GHz').format(c.band || '?'));
+		: _('Wi-Fi %s GHz').format(c.band || '?');
 	var info = [
 		infoRow(_('Device name'), sysName || '—'),
 		infoRow(_('Connection'), conn),
@@ -1358,10 +1428,7 @@ function nodeDialog(m, state, refresh) {
 
 	var chips = nodeChips(parents, m.bh_nodes ? m.bh_nodes.split('-') : []);
 	var conn = m.connection === 'wifi'
-		? (m.uplink_band
-			? E('span', { 'class': 'roamd-band roamd-band-' + common.bandKind(m.uplink_band) },
-				_('Wi-Fi %s GHz').format(m.uplink_band))
-			: _('Wi-Fi'))
+		? (m.uplink_band ? _('Wi-Fi %s GHz').format(m.uplink_band) : _('Wi-Fi'))
 		: (m.connection === 'wired' ? _('Cable') : '—');
 	var info = [
 		infoRow(_('Status'), m.online ? _('online') : _('offline')),
@@ -1561,17 +1628,59 @@ function trafficCell(c) {
 	]);
 }
 
-function clientCard(c, hints, ov, nodeName, allNodes, refresh) {
+function servingSample(c) {
+	var kind = common.bandKind(c.band);
+
+	if (!c.band)
+		return null;
+
+	if (kind === '2')
+		return { value: c.signal_24, age: c.signal_24_age };
+	if (kind === '6')
+		return { value: c.signal_6, age: c.signal_6_age };
+
+	return { value: c.signal_5, age: c.signal_5_age };
+}
+
+function clientRow(c, hints, ov, nodeName, allNodes, refresh) {
+	var name = common.clientLabel(hints, ov, c.mac) || c.host || '';
+	var state = clientState(c);
+	var seen = clientSeen(c);
+	var sample = (!c.wired && seen) ? servingSample(c) : null;
+	var stale = sample && (sample.age || 0) > SIGNAL_FRESH;
+	var band = c.wired ? _('Cable') : (seen && c.band ? _('Wi-Fi %s GHz').format(c.band) : '—');
+	var traffic = (seen && (c.rx_bytes || c.tx_bytes)) ? '↓ %s'.format(humanBytes(c.rx_bytes)) : '';
+	var badge = '';
 	var action = E('button', {
 		'class': 'btn cbi-button',
 		'click': function() { clientDialog(c, hints, ov, nodeName, allNodes, refresh); }
 	}, readOnly ? _('Details') : _('Settings'));
 
-	return E('article', { 'class': 'roamd-card' + (clientSeen(c) ? '' : ' roamd-card-off') }, [
-		clientTitle(c, hints, ov),
-		clientPlace(c, nodeName),
-		clientFacts(c, hints, ov),
-		E('div', { 'class': 'roamd-card-actions' }, action)
+	if (!seen)
+		badge = E('span', { 'class': 'roamd-pill' }, state.label);
+	else if (c.state === 'unknown')
+		badge = E('span', { 'class': 'roamd-pill roamd-pill-warn' }, state.label);
+	else if (c.no_place)
+		badge = E('span', { 'class': 'roamd-pill roamd-pill-warn' }, _('no allowed access point'));
+
+	return E('div', { 'class': 'roamd-row' + (seen ? '' : ' roamd-row-off') }, [
+		E('div', { 'class': 'roamd-row-main' }, [
+			E('div', {}, [
+				E('span', {
+					'class': 'roamd-dot',
+					'style': 'background:%s'.format(state.color),
+					'title': state.label
+				}),
+				E('strong', {}, name || c.mac)
+			]),
+			name ? common.note(c.mac) : '',
+			seen ? '' : common.note(viaNodeLabel(c, nodeName))
+		]),
+		E('span', {}, band),
+		sample ? common.dbmText(sample.value, { serving: true, stale: stale }) : E('span', { 'class': 'roamd-muted' }, '—'),
+		traffic ? E('span', { 'class': 'roamd-muted' }, traffic) : '',
+		badge,
+		action
 	]);
 }
 
@@ -1627,18 +1736,10 @@ function renderClients(state) {
 	}
 
 	function groupHead(id, count) {
-		var known = id === 'controller' || Object.prototype.hasOwnProperty.call(nodeOnline, id);
-		var online = id === 'controller' || nodeOnline[id];
-		var bits = [
+		return E('div', { 'class': 'roamd-group-head' }, [
 			E('span', { 'class': 'roamd-title' }, nodeName[id] || id),
-			E('span', { 'class': 'roamd-pill' }, id === 'controller' ? _('controller') : _('node')),
 			E('span', { 'class': 'roamd-muted' }, String(count))
-		];
-
-		if (known)
-			bits.splice(2, 0, statusMark(online));
-
-		return E('div', { 'class': 'roamd-group-head' }, bits);
+		]);
 	}
 
 	function refresh() {
@@ -1673,6 +1774,26 @@ function renderClients(state) {
 				(byNode[id] || (byNode[id] = [])).push(c);
 			});
 
+			if (clientFocus) {
+				var focused = {};
+
+				if (byNode[clientFocus])
+					focused[clientFocus] = byNode[clientFocus];
+
+				byNode = focused;
+				down = down.filter(function(c) {
+					return (c.node || 'controller') === clientFocus;
+				});
+				sections.push(E('p', { 'class': 'roamd-lead' }, [
+					nodeName[clientFocus] || clientFocus,
+					' · ',
+					E('button', {
+						'class': 'roamd-link',
+						'click': function(ev) { ev.preventDefault(); openClients(''); }
+					}, _('All nodes'))
+				]));
+			}
+
 			sections.push(E('h4', {}, _('Online')));
 
 			if (!groupOrder(byNode).length)
@@ -1683,16 +1804,16 @@ function renderClients(state) {
 
 				sections.push(E('section', { 'class': 'roamd-group' }, [
 					groupHead(id, list.length),
-					E('div', { 'class': 'roamd-grid' }, list.map(function(c) {
-						return clientCard(c, hints, ov, nodeName, allNodes, refresh);
+					E('div', { 'class': 'roamd-rows' }, list.map(function(c) {
+						return clientRow(c, hints, ov, nodeName, allNodes, refresh);
 					}))
 				]));
 			});
 
 			if (down.length) {
 				sections.push(E('h4', {}, _('Offline')));
-				sections.push(E('div', { 'class': 'roamd-grid' }, down.map(function(c) {
-					return clientCard(c, hints, ov, nodeName, allNodes, refresh);
+				sections.push(E('div', { 'class': 'roamd-rows' }, down.map(function(c) {
+					return clientRow(c, hints, ov, nodeName, allNodes, refresh);
 				})));
 			}
 
@@ -1700,13 +1821,11 @@ function renderClients(state) {
 		});
 	}
 
+	refreshClients = refresh;
 	refresh();
 	poll.add(refresh, 5);
 
-	return E('div', {}, [
-		E('p', {}, _('All devices of the Wi-Fi system: the node they are connected through, addresses, connection type and parameters, traffic. The settings button opens the name, allowed bands and allowed nodes of a device.')),
-		board
-	]);
+	return board;
 }
 
 var AUTO_UNITS = [
@@ -2121,11 +2240,14 @@ function renderController(state) {
 
 return view.extend({
 	load: function() {
-		return common.meshStatus().catch(function() { return {}; });
+		return Promise.all([
+			common.meshStatus().catch(function() { return {}; }),
+			uci.load('roamd').catch(function() { return null; })
+		]);
 	},
 
-	render: function(state) {
-		state = state || {};
+	render: function(data) {
+		var state = Array.isArray(data) ? (data[0] || {}) : (data || {});
 
 		common.ensureStyle();
 
@@ -2200,14 +2322,21 @@ function buildTabs(state) {
 		nodeNames[m.id] = m.name || m.hostname || m.id;
 	});
 
+	var hash = locationHash();
+
+	if (hash === 'clients' || hash.indexOf('clients/') === 0)
+		clientFocus = hash.indexOf('clients/') === 0 ? decodeURIComponent(hash.slice(8)) : '';
+	else
+		clientFocus = '';
+
 	var panes = [
 		isNode
-			? { title: _('Controller'), node: renderController(state) }
-			: { title: _('Nodes'), node: E('div', { 'id': 'mesh-nodes-pane' }, renderNodes(state)) },
-		{ title: _('Clients'), node: renderClients(state) },
-		{ title: _('Transition log'), node: renderLog() },
-		{ title: _('Settings'), node: renderSettings(state) },
-		{ title: _('Information'), node: renderInfo() }
+			? { key: 'controller', title: _('Controller'), node: renderController(state) }
+			: { key: 'nodes', title: _('Nodes'), node: E('div', { 'id': 'mesh-nodes-pane' }, renderNodes(state)) },
+		{ key: 'clients', title: _('Clients'), node: renderClients(state) },
+		{ key: 'log', title: _('Transition log'), node: renderLog() },
+		{ key: 'settings', title: _('Settings'), node: renderSettings(state) },
+		{ key: 'info', title: _('Information'), node: renderInfo() }
 	];
 
 	var menu = E('ul', { 'class': 'cbi-tabmenu' });
@@ -2220,6 +2349,16 @@ function buildTabs(state) {
 		});
 	}
 
+	meshActivate = function(key) {
+		var idx = 0;
+
+		panes.forEach(function(p, i) {
+			if (p.key === key)
+				idx = i;
+		});
+		activate(idx);
+	};
+
 	panes.forEach(function(p, i) {
 		menu.appendChild(E('li', {}, E('a', {
 			'href': '#',
@@ -2229,7 +2368,13 @@ function buildTabs(state) {
 	});
 
 	var wrap = E('div', {}, [ menu, content ]);
-	activate(0);
+
+	if (hash === 'clients' || hash.indexOf('clients/') === 0)
+		meshActivate('clients');
+	else if (hash === 'nodes')
+		meshActivate('nodes');
+	else
+		activate(0);
 
 	return wrap;
 }

@@ -60,11 +60,22 @@ function countClients() {
 	return n;
 }
 
-function summaryStat(label, value) {
-	return E('div', { 'class': 'roamd-stat' }, [
+function summaryStat(label, value, click) {
+	var attrs = { 'class': 'roamd-stat' };
+
+	if (click)
+		attrs.click = click;
+
+	return E(click ? 'button' : 'div', attrs, [
 		E('span', { 'class': 'roamd-k' }, label),
 		E('span', { 'class': 'roamd-v' }, value)
 	]);
+}
+
+function openMesh(hash) {
+	var path = (L && L.url) ? L.url('admin/network/roamd_mesh') : '';
+
+	window.location.href = path + '#' + hash;
 }
 
 function renderSummary() {
@@ -83,45 +94,58 @@ function renderSummary() {
 	if (statusData.band_steering)
 		stats.push(summaryStat(_('Preferred band'), prefText));
 
-	stats.push(summaryStat(_('Clients'), String(countClients())));
+	stats.push(summaryStat(_('Clients'), String(countClients()), function() { openMesh('clients'); }));
 
 	if (meshState.counts && meshState.counts.nodes != null && role !== 'node')
-		stats.push(summaryStat(_('Nodes'), String(meshState.counts.nodes)));
+		stats.push(summaryStat(_('Nodes'), String(meshState.counts.nodes), function() { openMesh('nodes'); }));
 
 	return E('div', { 'class': 'roamd-summary' }, stats);
 }
 
-function clientBlock(mac, client) {
+function clientBlock(mac, client, iface) {
 	var bands = client.bands || {};
 	var names = [];
-	var perBand = [];
+	var label = common.clientLabel(hostHints, common.deviceOverrides(), mac);
+	var extra = E('div', { 'class': 'roamd-row-extra', 'style': 'display:none' });
+	var lines = [
+		'802.11v %s'.format(client.btm ? _('yes') : _('no')),
+		'802.11k %s'.format(client.rrm ? _('yes') : _('no')),
+		'%s %d'.format(_('Steering attempts'), client.steer_count || 0)
+	];
 
 	for (var b in bands)
 		if (bands[b].seen)
 			names.push(b);
 
-	/* 2, then 5, then 6, so a 6 GHz reading is not tucked into the 5 GHz pill. */
 	names.sort(function(a, c) {
 		return common.bandKind(a) < common.bandKind(c) ? -1 : 1;
 	});
 
-	for (var i = 0; i < names.length; i++)
-		perBand.push(common.pill(
-			'%s %s'.format(common.bandLabel(names[i]), formatSignal(bands[names[i]].signal)),
-			'band' + common.bandKind(names[i])));
+	names.forEach(function(b) {
+		var serving = common.bandKind(b) === common.bandKind(iface.band);
 
-	return E('div', { 'class': 'roamd-sta' }, [
-		clientCell(mac),
-		E('div', { 'class': 'roamd-pills' }, [
-			common.pill(formatSignal(client.signal)),
-			common.pill('%t'.format(client.connected || 0)),
-			common.pill('802.11v %s'.format(client.btm ? _('yes') : _('no'))),
-			common.pill('802.11k %s'.format(client.rrm ? _('yes') : _('no'))),
-			common.pill('%s %d'.format(_('Steering attempts'), client.steer_count || 0))
-		]),
-		perBand.length
-			? E('div', { 'class': 'roamd-pills' }, perBand)
-			: E('div', { 'class': 'roamd-muted' }, '%s: %s'.format(_('Signal per band'), _('unknown')))
+		lines.push(E('div', {}, [
+			common.bandLabel(b) + ' ',
+			common.dbmText(bands[b].signal, { serving: serving })
+		]));
+	});
+
+	dom.content(extra, lines);
+
+	return E('div', {}, [
+		E('div', { 'class': 'roamd-row' }, [
+			E('div', { 'class': 'roamd-row-main' },
+				common.macCell(label, mac)),
+			E('span', {}, common.bandLabel(iface.band)),
+			common.dbmText(client.signal, { serving: true }),
+			E('span', { 'class': 'roamd-muted' }, '%t'.format(client.connected || 0))
+		].concat(E('button', {
+			'class': 'btn cbi-button',
+			'click': function() {
+				extra.style.display = extra.style.display ? '' : 'none';
+			}
+		}, _('Details')))),
+		extra
 	]);
 }
 
@@ -144,28 +168,24 @@ function ifaceCard(name, iface) {
 	});
 
 	for (var mac in cmap)
-		clients.push(clientBlock(mac, cmap[mac]));
+		clients.push(clientBlock(mac, cmap[mac], iface));
 
 	return E('article', { 'class': 'roamd-card' + (iface.active ? '' : ' roamd-card-off') }, [
 		E('div', { 'class': 'roamd-card-head' }, [
 			E('div', { 'class': 'roamd-card-id' }, [
-				E('div', { 'class': 'roamd-title' }, iface.ssid || name),
-				iface.ssid ? E('div', { 'class': 'roamd-sub' }, name) : ''
+				E('div', { 'class': 'roamd-title' }, iface.band
+					? '%s · %s %s'.format(common.bandLabel(iface.band), _('Channel'), iface.channel || '—')
+					: (iface.ssid || name)),
+				E('div', { 'class': 'roamd-sub' }, iface.ssid ? '%s · %s'.format(iface.ssid, name) : name)
 			]),
 			E('span', {
 				'class': iface.active ? 'roamd-state roamd-state-ok' : 'roamd-state roamd-state-off'
 			}, iface.active ? _('running') : _('down'))
 		]),
-		E('div', { 'class': 'roamd-pills' }, [
-			common.pill(common.bandLabel(iface.band), 'band' + common.bandKind(iface.band)),
-			common.pill('%s %s'.format(_('Channel'), iface.channel || '-'))
-		]),
 		E('div', { 'class': 'roamd-roam' }, [
 			E('div', { 'class': 'roamd-k' }, _('Roaming')),
 			E('div', {}, roam)
 		]),
-		E('div', { 'class': 'roamd-clients-label' },
-			'%s · %d'.format(_('Clients'), clients.length)),
 		clients.length
 			? E('div', {}, clients)
 			: E('div', { 'class': 'roamd-muted' }, _('No connected clients'))

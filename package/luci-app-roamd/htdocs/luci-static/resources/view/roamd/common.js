@@ -144,6 +144,28 @@ function facts(rows) {
 	return E('dl', { 'class': 'roamd-facts' }, nodes);
 }
 
+/* Serving-link dBm only. -55 / -75 match the daemon rssi_good / rssi_low defaults.
+ * Other bands and stale readings stay gray. Band identity is not a color. */
+function dbmText(value, opts) {
+	var dbm = signed(value);
+	var serving = !opts || opts.serving !== false;
+	var stale = !!(opts && opts.stale);
+	var cls = 'roamd-dbm';
+
+	if (!dbm)
+		return E('span', { 'class': 'roamd-muted' }, '—');
+
+	if (!serving || stale)
+		cls += ' roamd-stale';
+	else if (dbm >= -55)
+		cls += ' roamd-dbm-ok';
+	else
+		cls += ' roamd-dbm-warn';
+
+	return E('span', { 'class': cls }, '%d %s'.format(dbm, _('dBm')) +
+		(stale ? ' (' + _('stale') + ')' : ''));
+}
+
 function pill(text, kind) {
 	return E('span', { 'class': 'roamd-pill' + (kind ? ' roamd-pill-' + kind : '') }, text);
 }
@@ -168,6 +190,7 @@ return baseclass.extend({
 	ensureStyle: ensureStyle,
 	facts: facts,
 	pill: pill,
+	dbmText: dbmText,
 	bandKind: bandKind,
 
 	bandLabel: function(band) {
