@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <time.h>
 #include <dirent.h>
 #include <strings.h>
 #include <unistd.h>
@@ -2172,12 +2174,113 @@ bool mesh_node_drop(const char *macstr)
 	return true;
 }
 
+static uint64_t mono_ms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+
+	return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static bool read_u64_file(const char *path, uint64_t *out)
+{
+	FILE *f = fopen(path, "r");
+	unsigned long long value;
+
+	if (!f)
+		return false;
+
+	if (fscanf(f, "%llu", &value) != 1) {
+		fclose(f);
+		return false;
+	}
+
+	fclose(f);
+	*out = value;
+
+	return true;
+}
+
+/* Byte counters on br-lan, turned into kbit/s from the previous sample. */
+static bool bridge_kbps(uint32_t *rx_kbps, uint32_t *tx_kbps)
+{
+	static uint64_t prev_rx, prev_tx, prev_ms;
+	static uint32_t last_rx, last_tx;
+	static bool have, ready;
+	char path[64];
+	uint64_t rx, tx, now, dt, rx_k, tx_k;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/statistics/rx_bytes", MESH_BRIDGE);
+	if (!read_u64_file(path, &rx))
+		return false;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/statistics/tx_bytes", MESH_BRIDGE);
+	if (!read_u64_file(path, &tx))
+		return false;
+
+	now = mono_ms();
+
+	if (!have || now <= prev_ms || rx < prev_rx || tx < prev_tx) {
+		prev_rx = rx;
+		prev_tx = tx;
+		prev_ms = now;
+		have = true;
+		ready = false;
+
+		return false;
+	}
+
+	dt = now - prev_ms;
+
+	if (dt < 200) {
+		if (!ready)
+			return false;
+
+		*rx_kbps = last_rx;
+		*tx_kbps = last_tx;
+
+		return true;
+	}
+
+	rx_k = (rx - prev_rx) * 8 / dt;
+	tx_k = (tx - prev_tx) * 8 / dt;
+
+	if (rx_k > UINT32_MAX)
+		rx_k = UINT32_MAX;
+	if (tx_k > UINT32_MAX)
+		tx_k = UINT32_MAX;
+
+	last_rx = (uint32_t)rx_k;
+	last_tx = (uint32_t)tx_k;
+	prev_rx = rx;
+	prev_tx = tx;
+	prev_ms = now;
+	ready = true;
+	*rx_kbps = last_rx;
+	*tx_kbps = last_tx;
+
+	return true;
+}
+
+static void bridge_rate_blob(struct blob_buf *b)
+{
+	uint32_t rx, tx;
+
+	if (!bridge_kbps(&rx, &tx))
+		return;
+
+	blobmsg_add_u32(b, "rx_kbps", rx);
+	blobmsg_add_u32(b, "tx_kbps", tx);
+}
+
 void mesh_self_info(struct blob_buf *b)
 {
 	struct sysinfo si;
 	char value[32];
 
 	node_identity_blob(b);
+	bridge_rate_blob(b);
 
 	if (!sysinfo(&si))
 		blobmsg_add_u32(b, "uptime", si.uptime);
@@ -2280,6 +2383,7 @@ void mesh_node_report(struct blob_buf *b)
 		}
 	}
 	blobmsg_close_array(b, clients);
+	bridge_rate_blob(b);
 	blobmsg_add_string(b, "connection", node_connection());
 	blobmsg_add_string(b, "seg_trunk", mesh_seg_node_trunk());
 	blobmsg_add_string(b, "seg_issue", mesh_seg_node_issue());

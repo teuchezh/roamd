@@ -663,6 +663,27 @@ function roamingValue(m) {
 	return E('span', { 'class': 'roamd-state roamd-state-warn', 'title': issues }, _('roaming degraded'));
 }
 
+function formatMbps(kbps) {
+	var mb = Number(kbps) / 1000;
+
+	if (!isFinite(mb) || mb < 0)
+		return '0.0';
+
+	if (mb >= 100)
+		return String(Math.round(mb));
+
+	return (Math.round(mb * 10) / 10).toFixed(1);
+}
+
+/* rx_kbps and tx_kbps are the live br-lan rate. Absent until the daemon has two samples. */
+function throughputValue(src, online) {
+	if (online === false || !src || src.rx_kbps == null || src.tx_kbps == null)
+		return '—';
+
+	return '↓ %s  ↑ %s %s'.format(
+		formatMbps(src.rx_kbps), formatMbps(src.tx_kbps), _('Mbit/s'));
+}
+
 function memberCard(m, state) {
 	var online = !!m.online;
 	var action = E('button', {
@@ -684,6 +705,7 @@ function memberCard(m, state) {
 		]),
 		common.facts([
 			[ _('Client count'), String(m.client_count || 0) ],
+			[ _('Throughput'), throughputValue(m, online) ],
 			[ _('Uptime'), m.uptime ? '%t'.format(m.uptime) : '—' ],
 			[ _('Via'), viaLabel(m, state) ],
 			[ _('Connection'), connectionCell(m) ],
@@ -733,6 +755,7 @@ function controllerDialog(state) {
 	var info = [
 		infoRow(_('Role'), _('controller')),
 		infoRow(_('Clients'), String(state.controller_clients || 0)),
+		infoRow(_('Throughput'), throughputValue(self, true)),
 		infoRow(_('Nodes'), String(counts.nodes || 0)),
 		infoRow(_('Uptime'), self.uptime ? '%t'.format(self.uptime) : '—'),
 		infoRow(_('IP address'), self.addr || '—'),
@@ -798,6 +821,7 @@ function controllerCard(state) {
 		]),
 		common.facts([
 			[ _('Client count'), String(state.controller_clients || 0) ],
+			[ _('Throughput'), throughputValue(self, true) ],
 			[ _('Uptime'), self.uptime ? '%t'.format(self.uptime) : '—' ]
 		]),
 		E('div', { 'class': 'roamd-card-actions' }, check)
@@ -1344,6 +1368,7 @@ function nodeDialog(m, state, refresh) {
 		infoRow(_('Connection'), conn),
 		infoRow(_('Via'), viaLabel(m, state) || '—'),
 		infoRow(_('Clients'), String(m.client_count || 0)),
+		infoRow(_('Throughput'), throughputValue(m, !!m.online)),
 		infoRow(_('Uptime'), m.uptime ? '%t'.format(m.uptime) : '—'),
 		infoRow(_('IP address'), m.addr || '—'),
 		infoRow(_('MAC address'), m.mac || '—'),

@@ -265,6 +265,9 @@ msgstr "Сигнал"
 msgid "Uptime"
 msgstr "Время в сети"
 
+msgid "Throughput"
+msgstr "Загрузка"
+
 msgid "Signal per band"
 msgstr "Сигнал по диапазонам"
 
