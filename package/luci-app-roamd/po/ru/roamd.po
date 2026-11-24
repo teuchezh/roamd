@@ -1307,3 +1307,6 @@ msgstr "Подготовка"
 
 msgid "dBm"
 msgstr "дБм"
+
+msgid "stale"
+msgstr "устарело"
