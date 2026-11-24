@@ -24,6 +24,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Check signing secrets
+        env:
+          BRANCHES: ${{ github.event.inputs.branches }}
+          APK_SIGN_KEY: ${{ secrets.APK_SIGN_KEY }}
+          USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
+        run: |
+          wanted="$BRANCHES"
+          [ -n "$wanted" ] || wanted=$(awk '{ print $1 }' targets/branches.txt)
+          for branch in $wanted; do
+            case "$branch" in
+              25.12)
+                [ -n "$APK_SIGN_KEY" ] || { echo "::error::Missing APK_SIGN_KEY repository secret"; exit 1; }
+                ;;
+              23.05|24.10)
+                [ -n "$USIGN_SECRET" ] || { echo "::error::Missing USIGN_SECRET repository secret"; exit 1; }
+                ;;
+            esac
+          done
+
       - id: build
         run: |
           wanted="${{ github.event.inputs.branches }}"
