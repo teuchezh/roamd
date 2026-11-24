@@ -110,10 +110,88 @@ function twoLine(main, sub) {
 	return E('div', {}, [ main, note(sub) ]);
 }
 
+function signed(value) {
+	var n = Number(value);
+
+	if (!isFinite(n))
+		return 0;
+
+	return (n > 0x7fffffff) ? n - 4294967296 : n;
+}
+
+function ensureStyle() {
+	if (typeof document == 'undefined' || document.getElementById('roamd-style'))
+		return;
+
+	document.querySelector('head').appendChild(E('link', {
+		'id': 'roamd-style',
+		'rel': 'stylesheet',
+		'href': L.resource('view/roamd/roamd.css')
+	}));
+}
+
+function facts(rows) {
+	var nodes = [];
+
+	(rows || []).forEach(function(row) {
+		if (!row)
+			return;
+
+		nodes.push(E('dt', {}, row[0]));
+		nodes.push(E('dd', {}, (row[1] == null || row[1] === '') ? '—' : row[1]));
+	});
+
+	return E('dl', { 'class': 'roamd-facts' }, nodes);
+}
+
+/* Serving-link dBm only. -55 / -75 match the daemon rssi_good / rssi_low defaults.
+ * Other bands and stale readings stay gray. Band identity is not a color. */
+function dbmText(value, opts) {
+	var dbm = signed(value);
+	var serving = !opts || opts.serving !== false;
+	var stale = !!(opts && opts.stale);
+	var cls = 'roamd-dbm';
+
+	if (!dbm)
+		return E('span', { 'class': 'roamd-muted' }, '—');
+
+	if (!serving || stale)
+		cls += ' roamd-stale';
+	else if (dbm >= -55)
+		cls += ' roamd-dbm-ok';
+	else
+		cls += ' roamd-dbm-warn';
+
+	return E('span', { 'class': cls }, '%d %s'.format(dbm, _('dBm')) +
+		(stale ? ' (' + _('stale') + ')' : ''));
+}
+
+function pill(text, kind) {
+	return E('span', { 'class': 'roamd-pill' + (kind ? ' roamd-pill-' + kind : '') }, text);
+}
+
+function bandKind(band) {
+	band = String(band || '');
+
+	if (band.indexOf('2') === 0)
+		return '2';
+
+	if (band.indexOf('6') === 0)
+		return '6';
+
+	return '5';
+}
+
 return baseclass.extend({
 	meshStatus: callMeshStatus,
 	note: note,
 	twoLine: twoLine,
+	signed: signed,
+	ensureStyle: ensureStyle,
+	facts: facts,
+	pill: pill,
+	dbmText: dbmText,
+	bandKind: bandKind,
 
 	bandLabel: function(band) {
 		return '%s %s'.format(band, _('GHz'));

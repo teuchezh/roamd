@@ -8,6 +8,28 @@
 'require uci';
 
 var nodeUiOpen = false;
+var clientFocus = '';
+var meshActivate = function() {};
+var refreshClients = function() {};
+
+function locationHash() {
+	try {
+		return String(location.hash || '').replace(/^#/, '');
+	} catch (e) {
+		return '';
+	}
+}
+
+function openClients(nodeId) {
+	clientFocus = nodeId || '';
+
+	try {
+		location.hash = clientFocus ? 'clients/' + encodeURIComponent(clientFocus) : 'clients';
+	} catch (e) {}
+
+	meshActivate('clients');
+	refreshClients();
+}
 
 var callMeshClients = rpc.declare({
 	object: 'roamd',
@@ -137,30 +159,12 @@ function clientSeen(c) {
 	return c.state !== 'offline';
 }
 
-var CONS_ICON = { ok: '', degraded: '⚠', broken: '⛔' };
 var ISSUE_TEXT = {
 	ssid: _('SSID differs'),
 	encryption: _('encryption differs'),
 	mobility_domain: _('mobility domain differs'),
 	ieee80211r: _('802.11r differs')
 };
-
-function consistencyCell(online, m) {
-	var state = online ? E('span', {}, _('online')) : E('span', { 'style': 'color:#888' }, _('offline'));
-
-	if (!online || !m.consistency || m.consistency === 'ok')
-		return E('div', {}, state);
-
-	var issues = (m.issues || []).map(function(i) { return ISSUE_TEXT[i] || i; }).join(', ');
-	var color = m.consistency === 'broken' ? '#c00' : '#c60';
-	var label = m.consistency === 'broken' ? _('roaming broken') : _('roaming degraded');
-
-	return E('div', {}, [
-		state, E('br'),
-		E('small', { 'style': 'color:%s'.format(color), 'title': issues },
-			'%s %s'.format(CONS_ICON[m.consistency], label))
-	]);
-}
 
 var nodeNames = {};
 
@@ -180,7 +184,9 @@ function nodeCell(node, band) {
 	if (!node && !band)
 		return '-';
 
-	return common.twoLine(E('span', {}, nodeTitle(node)), band ? common.bandLabel(band) : '');
+	var bandNode = band ? common.bandLabel(band) : '';
+
+	return common.twoLine(E('span', {}, nodeTitle(node)), bandNode);
 }
 
 function timeCell(ts) {
@@ -195,14 +201,21 @@ function clientCell(mac) {
 	return common.macCell(logNames[(mac || '').toLowerCase()], mac);
 }
 
-function logRow(ev) {
-	return [
-		timeCell(ev.ts),
-		clientCell(ev.mac),
-		nodeCell(ev.from_node, ev.from_band),
-		nodeCell(ev.to_node, ev.to_band),
-		EVENT_TYPE[ev.type] || ev.type || ''
-	];
+function logItem(ev) {
+	return E('article', { 'class': 'roamd-event' }, [
+		E('div', { 'class': 'roamd-event-meta' }, [
+			E('div', { 'class': 'roamd-event-time' }, timeCell(ev.ts)),
+			E('div', { 'class': 'roamd-event-type' }, EVENT_TYPE[ev.type] || ev.type || '')
+		]),
+		E('div', { 'class': 'roamd-event-who' }, clientCell(ev.mac)),
+		E('div', { 'class': 'roamd-route' }, [
+			E('span', { 'class': 'roamd-k' }, _('From')),
+			nodeCell(ev.from_node, ev.from_band),
+			E('span', { 'class': 'roamd-arrow' }, '→'),
+			E('span', { 'class': 'roamd-k' }, _('To')),
+			nodeCell(ev.to_node, ev.to_band)
+		])
+	]);
 }
 
 function logCsv(events) {
@@ -360,30 +373,49 @@ function runJob(call, limit, done) {
 }
 
 function discoverDialog() {
-	var body = E('div', {}, [ E('p', { 'class': 'spinning' }, _('Scanning the local network…')) ]);
+	var wrap = E('div', {});
+	var cancel = function() { ui.hideModal(); };
 
-	ui.showModal(_('Add a new node'), [
-		body,
-		E('div', { 'class': 'right' }, [
-			E('button', { 'class': 'btn', 'click': function() { cancel(); } }, _('Close'))
-		])
-	]);
+	function help() {
+		dom.content(wrap, [
+			E('p', {}, _('To add a node: reset the new device to factory settings and make sure it has no administrator password.')),
+			E('p', {}, E('strong', {}, _('Connect a LAN port of the controller to a LAN port of the new device — not to its WAN port.'))),
+			E('p', { 'class': 'cbi-value-description' }, _('The controller needs root access to the device: SSH on port 22 without a password and, if the device has LuCI, port 80 open. Firmware where the root login is disabled or password-protected cannot be captured.')),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'btn', 'click': ui.hideModal }, _('Cancel')),
+				' ',
+				E('button', { 'class': 'btn cbi-button-positive', 'click': scan }, _('Scan'))
+			])
+		]);
+	}
 
-	var cancel = runJob(callMeshDiscover, Infinity, function(res) {
-		if (!res) {
-			dom.content(body, E('p', { 'class': 'alert-message warning' }, _('Could not scan the local network.')));
-			return;
-		}
+	function scan() {
+		dom.content(wrap, [
+			E('p', { 'class': 'spinning' }, _('Scanning the local network…')),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'btn', 'click': function() { cancel(); } }, _('Close'))
+			])
+		]);
 
-		var list = res.candidates || [];
+		cancel = runJob(callMeshDiscover, Infinity, function(res) {
+			if (!res) {
+				dom.content(wrap, E('p', { 'class': 'alert-message warning' }, _('Could not scan the local network.')));
+				return;
+			}
 
-		if (!list.length) {
-			dom.content(body, E('p', {}, _('No devices found. Reset the new device to factory settings and make sure it has no password, then try again.')));
-			return;
-		}
+			var list = res.candidates || [];
 
-		dom.content(body, list.map(renderCandidate));
-	});
+			if (!list.length) {
+				dom.content(wrap, E('p', {}, _('No devices found. Reset the new device to factory settings and make sure it has no password, then try again.')));
+				return;
+			}
+
+			dom.content(wrap, list.map(renderCandidate));
+		});
+	}
+
+	ui.showModal(_('Add a new node'), [ wrap ]);
+	help();
 }
 
 var PKG_STATE_TEXT = {
@@ -414,7 +446,7 @@ function renderCandidate(c) {
 		'click': function(ev) { confirmAcquire(c, ev.target); }
 	}, _('Capture'));
 
-	return E('div', { 'class': 'cbi-section', 'style': 'display:flex;justify-content:space-between;align-items:center' },
+	return E('div', { 'class': 'cbi-section roamd-candidate' },
 		[ E('div', {}, lines), action ]);
 }
 
@@ -568,19 +600,6 @@ function pollAcquire(task, body, misses, kind) {
 }
 
 function renderNodes(state) {
-	var intro = E('div', {}, [
-		E('p', {}, _('This device works as the Mesh Wi-Fi system controller.')),
-		E('p', {}, _('Add other OpenWrt devices to build one wireless system with central management and monitoring.')),
-		E('div', { 'style': 'border:1px solid #ccc;padding:8px;margin:8px 0;background:#f9f9f9' }, [
-			E('p', { 'style': 'margin:0 0 4px 0' }, _('To add a node: reset the new device to factory settings and make sure it has no administrator password.')),
-			E('p', { 'style': 'margin:4px 0' }, E('strong', { 'style': 'color:#c33' },
-				_('Connect a LAN port of the controller to a LAN port of the new device — not to its WAN port.'))),
-			E('p', { 'style': 'margin:4px 0 0 0' }, _('Then press "Add a new node" and capture the device that appears.'))
-		]),
-		E('p', { 'class': 'cbi-value-description' }, _('The controller needs root access to the device: SSH on port 22 without a password and, if the device has LuCI, port 80 open. Firmware where the root login is disabled or password-protected cannot be captured.')),
-		E('p', {}, '')
-	]);
-
 	var deps = state.deps_ready ? '' : E('div', { 'class': 'alert-message warning' }, [
 		E('strong', {}, _('Preparing the controller is not finished')),
 		E('div', {}, state.deps_state || _('the required packages are not installed yet')),
@@ -622,43 +641,154 @@ function renderNodes(state) {
 	]);
 
 	var members = state.members || [];
-	var table = E('table', { 'class': 'table cbi-section-table' }, [
-		E('tr', { 'class': 'tr table-titles' }, [
-			E('th', { 'class': 'th' }, _('Node name')),
-			E('th', { 'class': 'th', 'style': 'width:1%;white-space:nowrap' }, _('Client count')),
-			E('th', { 'class': 'th' }, _('Status')),
-			E('th', { 'class': 'th' }, _('Uptime')),
-			E('th', { 'class': 'th' }, _('Via')),
-			E('th', { 'class': 'th' }, _('Connection')),
-			E('th', { 'class': 'th' }, '')
-		])
-	]);
-	var rows = [ controllerRow(state) ].concat(members.map(function(m) {
-		var actions = E('button', {
-			'class': 'btn cbi-button',
-			'click': function() { nodeDialog(m, state, refreshNodes); }
-		}, readOnly ? _('Details') : _('Settings'));
-
-		return [ nameCell(m), m.client_count || 0, consistencyCell(m.online, m),
-			m.uptime ? '%t'.format(m.uptime) : '-', viaLabel(m, state),
-			connectionCell(m), actions ];
+	var counts = state.counts || {};
+	var pref = '';
+	var cards = [ controllerCard(state) ].concat(members.map(function(m) {
+		return memberCard(m, state);
 	}));
 
-	cbi_update_table(table, rows, E('em', {}, _('No nodes yet')));
+	try {
+		pref = uci.get('roamd', 'global', 'prefer_band') || '';
+	} catch (e) {}
 
-	return E('div', {}, [ deps, running, intro, E('div', {}, addButton), E('br'), table ]);
+	return E('div', {}, [
+		deps, running,
+		E('div', { 'class': 'roamd-toolbar' }, [
+			E('p', { 'class': 'roamd-lead' }, [
+				'%s %s'.format(String(counts.nodes || 0), _('Nodes')),
+				' · ',
+				E('button', {
+					'class': 'roamd-link',
+					'click': function(ev) { ev.preventDefault(); openClients(''); }
+				}, '%s %s'.format(String(counts.clients || 0), _('Clients'))),
+				pref ? ' · ' + preferText(pref) : ''
+			]),
+			addButton
+		]),
+		E('div', { 'class': 'roamd-grid' }, cards)
+	]);
+}
+
+function preferText(pref) {
+	if (pref === '2' || pref === '2.4' || pref === 'low')
+		return _('2.4 GHz');
+	if (pref === '5' || pref === 'high')
+		return _('5 GHz');
+	if (pref === '6')
+		return _('6 GHz');
+
+	return _('No preference');
+}
+
+function summaryStat(label, value) {
+	return E('div', { 'class': 'roamd-stat' }, [
+		E('span', { 'class': 'roamd-k' }, label),
+		E('span', { 'class': 'roamd-v' }, value)
+	]);
+}
+
+function statusMark(online) {
+	return E('span', {
+		'class': online ? 'roamd-state roamd-state-ok' : 'roamd-state roamd-state-off'
+	}, online ? _('online') : _('offline'));
+}
+
+function roamingValue(m) {
+	var issues;
+
+	if (!m.online)
+		return '—';
+
+	if (!m.consistency || m.consistency === 'ok')
+		return E('span', { 'class': 'roamd-state roamd-state-ok' }, _('works'));
+
+	issues = (m.issues || []).map(function(i) { return ISSUE_TEXT[i] || i; }).join(', ');
+
+	if (m.consistency === 'broken')
+		return E('span', { 'class': 'roamd-state roamd-state-bad', 'title': issues }, _('roaming broken'));
+
+	return E('span', { 'class': 'roamd-state roamd-state-warn', 'title': issues }, _('roaming degraded'));
+}
+
+function formatMbps(kbps) {
+	var mb = Number(kbps) / 1000;
+
+	if (!isFinite(mb) || mb < 0)
+		return '0.0';
+
+	if (mb >= 100)
+		return String(Math.round(mb));
+
+	return (Math.round(mb * 10) / 10).toFixed(1);
+}
+
+/* rx_kbps and tx_kbps are the live br-lan rate. Absent until the daemon has two samples. */
+function throughputValue(src, online) {
+	if (online === false || !src || src.rx_kbps == null || src.tx_kbps == null)
+		return '—';
+
+	return '↓ %s  ↑ %s %s'.format(
+		formatMbps(src.rx_kbps), formatMbps(src.tx_kbps), _('Mbit/s'));
+}
+
+function memberCard(m, state) {
+	var online = !!m.online;
+	var action = E('button', {
+		'class': 'btn cbi-button',
+		'click': function() { nodeDialog(m, state, refreshNodes); }
+	}, readOnly ? _('Details') : _('Settings'));
+	var pills = [ E('span', { 'class': 'roamd-pill' }, _('node')) ];
+
+	if (m.update_available)
+		pills.push(E('span', { 'class': 'roamd-pill roamd-pill-warn' }, _('update available')));
+
+	if (m.seg_issue)
+		pills.push(E('span', { 'class': 'roamd-pill roamd-pill-warn' }, m.seg_issue));
+
+	return E('article', { 'class': 'roamd-card' + (online ? '' : ' roamd-card-off') }, [
+		E('div', { 'class': 'roamd-card-head' }, [
+			E('div', { 'class': 'roamd-card-id' }, [
+				nameCell(m),
+				E('div', { 'class': 'roamd-pills' }, pills)
+			]),
+			statusMark(online)
+		]),
+		common.facts([
+			[ _('Client count'), clientCountLink(m.id, m.client_count) ],
+			[ _('Throughput'), throughputValue(m, online) ],
+			[ _('Uptime'), m.uptime ? '%t'.format(m.uptime) : '—' ],
+			[ _('Via'), (function() {
+				var via = viaLabel(m, state);
+				return (!via || via === '-') ? '—' : via;
+			})() ],
+			[ _('Connection'), connectionCell(m) ],
+			[ _('Roaming'), roamingValue(m) ]
+		]),
+		E('div', { 'class': 'roamd-card-actions' }, action)
+	]);
+}
+
+function clientCountLink(id, count) {
+	return E('button', {
+		'class': 'roamd-link',
+		'click': function(ev) {
+			ev.preventDefault();
+			openClients(id);
+		}
+	}, String(count || 0));
 }
 
 function connectionCell(m) {
 	if (m.connection !== 'wifi')
 		return m.connection === 'wired' ? _('Cable') : '-';
 
-	var head = m.uplink_band
+	var dbm = m.uplink_signal ? common.signed(m.uplink_signal) : 0;
+	var label = m.uplink_band
 		? '%s %s'.format(_('Wi-Fi'), common.bandLabel(m.uplink_band))
 		: _('Wi-Fi');
-
-	if (m.uplink_signal)
-		head = '%s: %d %s'.format(head, m.uplink_signal, _('dBm'));
+	var head = dbm
+		? E('span', {}, [ label + ': ', common.dbmText(m.uplink_signal, { serving: true }) ])
+		: label;
 
 	var parts = [];
 
@@ -669,7 +799,7 @@ function connectionCell(m) {
 	if (m.uplink_width)
 		parts.push('%d %s'.format(m.uplink_width, _('MHz')));
 
-	return E('div', { 'style': 'white-space:nowrap' }, [
+	return E('div', {}, [
 		E('div', {}, head),
 		common.note(parts.join(' '))
 	]);
@@ -688,6 +818,7 @@ function controllerDialog(state) {
 	var info = [
 		infoRow(_('Role'), _('controller')),
 		infoRow(_('Clients'), String(state.controller_clients || 0)),
+		infoRow(_('Throughput'), throughputValue(self, true)),
 		infoRow(_('Nodes'), String(counts.nodes || 0)),
 		infoRow(_('Uptime'), self.uptime ? '%t'.format(self.uptime) : '—'),
 		infoRow(_('IP address'), self.addr || '—'),
@@ -732,19 +863,35 @@ function controllerDialog(state) {
 	]);
 }
 
-function controllerRow(state) {
+function controllerCard(state) {
 	var self = state.self || {};
 	var name = state.controller_name || self.hostname || _('This device');
-	var cell = common.twoLine(E('strong', {}, name), _('controller'));
 	var check = E('button', {
 		'class': 'btn cbi-button',
 		'click': function() { controllerDialog(state); }
 	}, readOnly ? _('Details') : _('Settings'));
 
-	return [ cell, state.controller_clients || 0,
-		E('span', { 'style': 'color:#2e9e2e', 'title': _('this device') }, '●'),
-		self.uptime ? '%t'.format(self.uptime) : '-',
-		'—', '—', check ];
+	return E('article', { 'class': 'roamd-card roamd-card-controller' }, [
+		E('div', { 'class': 'roamd-card-head' }, [
+			E('div', { 'class': 'roamd-card-id' }, [
+				E('div', { 'class': 'roamd-title' }, name),
+				E('div', { 'class': 'roamd-pills' }, [
+					E('span', { 'class': 'roamd-pill' }, _('controller')),
+					E('span', { 'class': 'roamd-pill' }, _('this device'))
+				])
+			]),
+			E('span', { 'class': 'roamd-state roamd-state-ok', 'title': _('this device') }, _('online'))
+		]),
+		common.facts([
+			[ _('Client count'), clientCountLink('controller', state.controller_clients) ],
+			[ _('Throughput'), throughputValue(self, true) ],
+			[ _('Uptime'), self.uptime ? '%t'.format(self.uptime) : '—' ],
+			[ _('Via'), '—' ],
+			[ _('Connection'), '—' ],
+			[ _('Roaming'), '—' ]
+		]),
+		E('div', { 'class': 'roamd-card-actions' }, check)
+	]);
 }
 
 function checkSelfUpdate() {
@@ -831,9 +978,10 @@ function nameCell(m) {
 		'href': 'http://%s/'.format(m.addr),
 		'target': '_blank',
 		'rel': 'noreferrer',
+		'class': 'roamd-link',
 		'title': _('Open the node web interface'),
-		'style': 'text-decoration:none;margin-left:.4em'
-	}, '🌐') : '';
+		'style': 'margin-left:.4em'
+	}, _('web')) : '';
 
 	return common.twoLine(E('div', {}, [ E('strong', {}, alias), link ]), sys);
 }
@@ -941,16 +1089,7 @@ function renderLog() {
 	var filters = { mac: '', from: '', to: '', type: '' };
 	var all = [];
 
-	var table = E('table', { 'class': 'table cbi-section-table' }, [
-		E('tr', { 'class': 'tr table-titles' }, [
-			E('th', { 'class': 'th' }, _('Time')),
-			E('th', { 'class': 'th' }, _('Client')),
-			E('th', { 'class': 'th' }, _('From')),
-			E('th', { 'class': 'th' }, _('To')),
-			E('th', { 'class': 'th' }, _('Type'))
-		])
-	]);
-
+	var list = E('div', { 'class': 'roamd-events' });
 	var counter = E('span', { 'class': 'cbi-value-description' }, '');
 
 	function refresh() {
@@ -967,7 +1106,9 @@ function renderLog() {
 		});
 
 		counter.textContent = _('Showing %d of %d records').format(shown.length, all.length);
-		cbi_update_table(table, shown.map(logRow), E('em', {}, _('The transition log is empty')));
+		dom.content(list, shown.length
+			? shown.map(logItem)
+			: E('em', {}, _('The transition log is empty')));
 	}
 
 	function filterInput(key, ph) {
@@ -1004,7 +1145,7 @@ function renderLog() {
 
 	var container = E('div', {}, [
 		E('p', {}, _('Client transitions between the nodes of the Wi-Fi system are shown here.')),
-		bar, table
+		bar, list
 	]);
 
 	function load() {
@@ -1152,12 +1293,33 @@ function nodeChips(allNodes, allowed) {
 
 var SIGNAL_FRESH = 90;
 
-function signalLine(band, signal, age) {
-	if (!signal)
+function signalLine(band, signal, age, serving) {
+	var stale = (age || 0) > SIGNAL_FRESH;
+	var dbm = common.signed(signal);
+
+	if (!dbm)
 		return '';
 
-	return E('div', { 'style': (age || 0) > SIGNAL_FRESH ? 'color:#999' : '' },
-		'%s — %d %s'.format(common.bandLabel(band), signal, _('dBm')));
+	return E('div', {}, [
+		common.bandLabel(band) + ' — ',
+		common.dbmText(signal, { serving: serving, stale: stale })
+	]);
+}
+
+/* 6 GHz has its own RSSI slot. It is not drawn on the 5 GHz line. */
+function signalBlock(c) {
+	if (!c || (!c.signal_24 && !c.signal_5 && !c.signal_6))
+		return null;
+
+	function serving(band) {
+		return common.bandKind(c.band) === common.bandKind(band);
+	}
+
+	return E('div', {}, [
+		signalLine('2.4', c.signal_24, c.signal_24_age, serving('2.4')),
+		signalLine('5', c.signal_5, c.signal_5_age, serving('5')),
+		signalLine('6', c.signal_6, c.signal_6_age, serving('6'))
+	]);
 }
 
 function clientDialog(c, hints, ov, nodeName, allNodes, refresh) {
@@ -1175,7 +1337,8 @@ function clientDialog(c, hints, ov, nodeName, allNodes, refresh) {
 	var chips = nodeChips(allNodes, saved.nodes);
 	var ip4 = hintIp4(hints, c.mac);
 	var conn = !clientSeen(c) ? _('offline')
-		: c.wired ? _('Cable') : _('Wi-Fi %s GHz').format(c.band || '?');
+		: c.wired ? _('Cable')
+		: _('Wi-Fi %s GHz').format(c.band || '?');
 	var info = [
 		infoRow(_('Device name'), sysName || '—'),
 		infoRow(_('Connection'), conn),
@@ -1184,11 +1347,10 @@ function clientDialog(c, hints, ov, nodeName, allNodes, refresh) {
 
 	if (ip4)
 		info.push(infoRow(_('IP address'), ip4));
-	if (c.signal_24 || c.signal_5)
-		info.push(infoRow(_('Signal'), E('div', {}, [
-			signalLine('2.4', c.signal_24, c.signal_24_age),
-			signalLine('5', c.signal_5, c.signal_5_age)
-		])));
+	var signals = signalBlock(c);
+
+	if (signals)
+		info.push(infoRow(_('Signal'), signals));
 	if (c.rate)
 		info.push(infoRow(_('Rate'), '%d %s'.format(Math.round(c.rate / 1000), _('Mbit/s'))));
 	if (c.rx_bytes || c.tx_bytes) {
@@ -1273,6 +1435,7 @@ function nodeDialog(m, state, refresh) {
 		infoRow(_('Connection'), conn),
 		infoRow(_('Via'), viaLabel(m, state) || '—'),
 		infoRow(_('Clients'), String(m.client_count || 0)),
+		infoRow(_('Throughput'), throughputValue(m, !!m.online)),
 		infoRow(_('Uptime'), m.uptime ? '%t'.format(m.uptime) : '—'),
 		infoRow(_('IP address'), m.addr || '—'),
 		infoRow(_('MAC address'), m.mac || '—'),
@@ -1281,8 +1444,8 @@ function nodeDialog(m, state, refresh) {
 			m.pkg_version || '—', m.update_available ? ' ⬆' : ''))
 	];
 
-	if (m.connection === 'wifi' && m.uplink_signal)
-		info.splice(2, 0, infoRow(_('Uplink signal'), '%d %s'.format(m.uplink_signal, _('dBm'))));
+	if (m.connection === 'wifi' && common.signed(m.uplink_signal))
+		info.splice(2, 0, infoRow(_('Uplink signal'), '%d %s'.format(common.signed(m.uplink_signal), _('dBm'))));
 
 	if (m.consistency && m.consistency !== 'ok')
 		info.push(infoRow(_('Profile check'), m.issues || m.consistency));
@@ -1355,16 +1518,18 @@ function viaNodeLabel(c, nodeName) {
 	return nodeName[c.node || 'controller'] || c.node || _('controller');
 }
 
-function clientNameCell(c, hints, ov, nodeName) {
-	var mac = c.mac.toLowerCase();
+function clientTitle(c, hints, ov) {
 	var alias = common.clientLabel(hints, ov, c.mac) || c.host || c.mac;
-	var dot = E('span', {
-		'style': 'display:inline-block;width:.6em;height:.6em;border-radius:50%%;margin-right:.5em;background:%s'
-			.format(clientState(c).color)
-	});
-	var lines = [ E('div', {}, [ dot, E('strong', {}, alias) ]) ];
+	var state = clientState(c);
 
-	return E('div', {}, lines);
+	return E('div', { 'class': 'roamd-title' }, [
+		E('span', {
+			'class': 'roamd-dot',
+			'style': 'background:%s'.format(state.color),
+			'title': state.label
+		}),
+		alias
+	]);
 }
 
 function addrCell(c, hints) {
@@ -1385,22 +1550,56 @@ function addrCell(c, hints) {
 	return E('div', {}, lines);
 }
 
-function connCell(c, ov) {
-	var mac = c.mac.toLowerCase();
-	var lock = (ov[mac] && ov[mac].band) || 'both';
-
-	var state = clientState(c);
-	var status = c.state === 'online' ? '' : common.note(state.label, state.color);
+function clientPlace(c, nodeName) {
+	var bandText = '';
+	var kind = 'wire';
 
 	if (c.wired)
-		return E('div', {}, [ E('span', {}, _('Cable')), status ]);
+		bandText = _('Cable');
+	else if (clientSeen(c)) {
+		bandText = _('Wi-Fi %s GHz').format(c.band || '?');
+		kind = common.bandKind(c.band);
+	}
 
-	return E('div', {}, [
-		E('span', {}, bandLockLabel(lock)),
-		clientSeen(c) ? common.note(_('Wi-Fi %s GHz').format(c.band || '?')) : '',
-		status,
-		c.no_place ? common.note(_('no allowed access point'), '#c44') : ''
+	return E('div', { 'class': 'roamd-where' }, [
+		E('div', {}, [
+			E('div', { 'class': 'roamd-k' }, _('Through node')),
+			E('div', { 'class': 'roamd-where-name' },
+				clientSeen(c) ? viaNodeLabel(c, nodeName) : '—')
+		]),
+		bandText ? E('div', { 'class': 'roamd-band roamd-band-' + kind }, bandText) : ''
 	]);
+}
+
+function clientFacts(c, hints, ov) {
+	var mac = c.mac.toLowerCase();
+	var lock = (ov[mac] && ov[mac].band) || 'both';
+	var state = clientState(c);
+	var rows = [ [ _('Address'), addrCell(c, hints) ] ];
+
+	if (!c.wired)
+		rows.push([ _('Connection'), E('div', {}, [
+			E('span', {}, bandLockLabel(lock)),
+			c.no_place ? common.note(_('no allowed access point'), '#c44') : ''
+		]) ]);
+
+	var signals = signalBlock(c);
+
+	if (clientSeen(c) && signals)
+		rows.push([ _('Signal'), signals ]);
+
+	if (clientSeen(c) && c.rate)
+		rows.push([ _('Parameters'), paramCell(c) ]);
+
+	if (clientSeen(c) && (c.rx_bytes || c.tx_bytes))
+		rows.push([ _('Traffic'), trafficCell(c) ]);
+
+	if (c.state !== 'online')
+		rows.push([ _('Status'), E('span', {
+			'class': 'roamd-state ' + (c.state === 'unknown' ? 'roamd-state-warn' : 'roamd-state-off')
+		}, state.label) ]);
+
+	return common.facts(rows);
 }
 
 function paramCell(c) {
@@ -1429,21 +1628,60 @@ function trafficCell(c) {
 	]);
 }
 
+function servingSample(c) {
+	var kind = common.bandKind(c.band);
+
+	if (!c.band)
+		return null;
+
+	if (kind === '2')
+		return { value: c.signal_24, age: c.signal_24_age };
+	if (kind === '6')
+		return { value: c.signal_6, age: c.signal_6_age };
+
+	return { value: c.signal_5, age: c.signal_5_age };
+}
+
 function clientRow(c, hints, ov, nodeName, allNodes, refresh) {
+	var name = common.clientLabel(hints, ov, c.mac) || c.host || '';
+	var state = clientState(c);
+	var seen = clientSeen(c);
+	var sample = (!c.wired && seen) ? servingSample(c) : null;
+	var stale = sample && (sample.age || 0) > SIGNAL_FRESH;
+	var band = c.wired ? _('Cable') : (seen && c.band ? _('Wi-Fi %s GHz').format(c.band) : '—');
+	var traffic = (seen && (c.rx_bytes || c.tx_bytes)) ? '↓ %s'.format(humanBytes(c.rx_bytes)) : '';
+	var badge = '';
 	var action = E('button', {
 		'class': 'btn cbi-button',
 		'click': function() { clientDialog(c, hints, ov, nodeName, allNodes, refresh); }
 	}, readOnly ? _('Details') : _('Settings'));
 
-	return [
-		clientNameCell(c, hints, ov, nodeName),
-		clientSeen(c) ? viaNodeLabel(c, nodeName) : '—',
-		addrCell(c, hints),
-		connCell(c, ov),
-		paramCell(c),
-		trafficCell(c),
+	if (!seen)
+		badge = E('span', { 'class': 'roamd-pill' }, state.label);
+	else if (c.state === 'unknown')
+		badge = E('span', { 'class': 'roamd-pill roamd-pill-warn' }, state.label);
+	else if (c.no_place)
+		badge = E('span', { 'class': 'roamd-pill roamd-pill-warn' }, _('no allowed access point'));
+
+	return E('div', { 'class': 'roamd-row' + (seen ? '' : ' roamd-row-off') }, [
+		E('div', { 'class': 'roamd-row-main' }, [
+			E('div', {}, [
+				E('span', {
+					'class': 'roamd-dot',
+					'style': 'background:%s'.format(state.color),
+					'title': state.label
+				}),
+				E('strong', {}, name || c.mac)
+			]),
+			name ? common.note(c.mac) : '',
+			seen ? '' : common.note(viaNodeLabel(c, nodeName))
+		]),
+		E('span', {}, band),
+		sample ? common.dbmText(sample.value, { serving: true, stale: stale }) : E('span', { 'class': 'roamd-muted' }, '—'),
+		traffic ? E('span', { 'class': 'roamd-muted' }, traffic) : '',
+		badge,
 		action
-	];
+	]);
 }
 
 function serviceMacs(members) {
@@ -1463,35 +1701,46 @@ function serviceMacs(members) {
 	return set;
 }
 
-function clientTable(caption) {
-	var table = E('table', { 'class': 'table cbi-section-table' }, [
-		E('tr', { 'class': 'tr table-titles' }, [
-			E('th', { 'class': 'th' }, _('Client')),
-			E('th', { 'class': 'th' }, _('Through node')),
-			E('th', { 'class': 'th' }, _('Address')),
-			E('th', { 'class': 'th' }, _('Connection')),
-			E('th', { 'class': 'th' }, _('Parameters')),
-			E('th', { 'class': 'th' }, _('Traffic')),
-			E('th', { 'class': 'th' }, '')
-		])
-	]);
-
-	return { title: E('h4', {}, caption), table: table };
-}
-
 function renderClients(state) {
 	var members = state.members || [];
 	var nodeName = {};
+	var nodeOnline = {};
 
-	members.forEach(function(m) { nodeName[m.id] = m.name || m.hostname || m.id; });
-	nodeName['controller'] = controllerLabel(state);
+	members.forEach(function(m) {
+		nodeName[m.id] = m.name || m.hostname || m.id;
+		nodeOnline[m.id] = !!m.online;
+	});
+	nodeName.controller = controllerLabel(state);
 	nodeNames = Object.assign({}, nodeName);
 
 	var allNodes = [ { id: 'controller', label: controllerLabel(state) } ].concat(
 		members.map(function(m) { return { id: m.id, label: nodeName[m.id] }; }));
+	var board = E('div', { 'id': 'mesh-clients-board' });
 
-	var online = clientTable(_('Online'));
-	var offline = clientTable(_('Offline'));
+	function groupOrder(ids) {
+		var ordered = [];
+
+		if (ids.controller)
+			ordered.push('controller');
+
+		members.forEach(function(m) {
+			if (ids[m.id])
+				ordered.push(m.id);
+		});
+
+		for (var id in ids)
+			if (ordered.indexOf(id) < 0)
+				ordered.push(id);
+
+		return ordered;
+	}
+
+	function groupHead(id, count) {
+		return E('div', { 'class': 'roamd-group-head' }, [
+			E('span', { 'class': 'roamd-title' }, nodeName[id] || id),
+			E('span', { 'class': 'roamd-muted' }, String(count))
+		]);
+	}
 
 	function refresh() {
 		uci.unload('roamd');
@@ -1505,34 +1754,78 @@ function renderClients(state) {
 			var hints = res[1] || {};
 			var ov = common.deviceOverrides();
 			var service = serviceMacs(members);
-			var up = [];
+			var byNode = {};
 			var down = [];
+			var sections = [];
 
 			clients.forEach(function(c) {
 				var mac = c.mac.toLowerCase();
+				var id;
 
 				if (service[mac])
 					return;
 
-				(clientSeen(c) ? up : down).push(clientRow(c, hints, ov, nodeName, allNodes, refresh));
+				if (!clientSeen(c)) {
+					down.push(c);
+					return;
+				}
+
+				id = c.node || 'controller';
+				(byNode[id] || (byNode[id] = [])).push(c);
 			});
 
-			cbi_update_table(online.table, up, E('em', {}, _('No clients online')));
-			cbi_update_table(offline.table, down, E('em', {}, _('No offline clients')));
-			offline.title.style.display = down.length ? '' : 'none';
-			offline.table.style.display = down.length ? '' : 'none';
+			if (clientFocus) {
+				var focused = {};
+
+				if (byNode[clientFocus])
+					focused[clientFocus] = byNode[clientFocus];
+
+				byNode = focused;
+				down = down.filter(function(c) {
+					return (c.node || 'controller') === clientFocus;
+				});
+				sections.push(E('p', { 'class': 'roamd-lead' }, [
+					nodeName[clientFocus] || clientFocus,
+					' · ',
+					E('button', {
+						'class': 'roamd-link',
+						'click': function(ev) { ev.preventDefault(); openClients(''); }
+					}, _('All nodes'))
+				]));
+			}
+
+			sections.push(E('h4', {}, _('Online')));
+
+			if (!groupOrder(byNode).length)
+				sections.push(E('p', {}, E('em', {}, _('No clients online'))));
+
+			groupOrder(byNode).forEach(function(id) {
+				var list = byNode[id];
+
+				sections.push(E('section', { 'class': 'roamd-group' }, [
+					groupHead(id, list.length),
+					E('div', { 'class': 'roamd-rows' }, list.map(function(c) {
+						return clientRow(c, hints, ov, nodeName, allNodes, refresh);
+					}))
+				]));
+			});
+
+			if (down.length) {
+				sections.push(E('h4', {}, _('Offline')));
+				sections.push(E('div', { 'class': 'roamd-rows' }, down.map(function(c) {
+					return clientRow(c, hints, ov, nodeName, allNodes, refresh);
+				})));
+			}
+
+			dom.content(board, sections);
 		});
 	}
 
+	refreshClients = refresh;
 	refresh();
 	poll.add(refresh, 5);
 
-	return E('div', {}, [
-		E('p', {}, _('All devices of the Wi-Fi system: the node they are connected through, addresses, connection type and parameters, traffic. The settings button opens the name, allowed bands and allowed nodes of a device.')),
-		online.title, online.table,
-		E('br'),
-		offline.title, offline.table
-	]);
+	return board;
 }
 
 var AUTO_UNITS = [
@@ -1573,22 +1866,17 @@ function bandsLabel(bands) {
 		list.push(common.bandLabel('2.4'));
 	if (bands & 2)
 		list.push(common.bandLabel('5'));
+	/* Mesh bit 0x4 is 6 GHz, separate from the 5 GHz bit. */
+	if (bands & 4)
+		list.push(common.bandLabel('6'));
 
 	return list.length ? list.join(', ') : '—';
 }
 
 function renderNetworks(state) {
 	var nets = state.networks || [];
-	var rows = [ E('div', { 'class': 'tr table-titles' }, [
-		E('div', { 'class': 'th' }, _('Network')),
-		E('div', { 'class': 'th' }, _('Security')),
-		E('div', { 'class': 'th' }, _('Bands')),
-		E('div', { 'class': 'th' }, _('On the nodes')),
-		E('div', { 'class': 'th' }, _('Roaming'))
-	]) ];
 	var status = E('span', { 'style': 'margin-left:1em' });
-
-	nets.forEach(function(net) {
+	var cards = nets.map(function(net) {
 		var box = E('input', {
 			'type': 'checkbox',
 			'checked': net.roaming ? 'checked' : null,
@@ -1606,26 +1894,28 @@ function renderNetworks(state) {
 			}
 		});
 
-		rows.push(E('div', { 'class': 'tr' }, [
-			E('div', { 'class': 'td' }, net.ssid),
-			E('div', { 'class': 'td' }, net.encryption || 'none'),
-			E('div', { 'class': 'td' }, bandsLabel(net.bands || 0)),
-			E('div', { 'class': 'td' }, net.segment
-				? E('span', { 'class': 'label' },
-					_('segment %d: over the wireless backhaul, and over cable on nodes without a shared switch').format(net.vid || 0))
-				: _('yes')),
-			E('div', { 'class': 'td' }, box)
-		]));
+		return E('article', { 'class': 'roamd-card' }, [
+			E('div', { 'class': 'roamd-card-head' }, [
+				E('div', { 'class': 'roamd-title' }, net.ssid),
+				E('label', { 'class': 'roamd-toggle' }, [ box, ' ', _('Roaming') ])
+			]),
+			common.facts([
+				[ _('Security'), net.encryption || 'none' ],
+				[ _('Bands'), bandsLabel(net.bands || 0) ],
+				[ _('On the nodes'), net.segment
+					? _('segment %d: over the wireless backhaul, and over cable on nodes without a shared switch').format(net.vid || 0)
+					: _('yes') ]
+			])
+		]);
 	});
-
-	rows.push(E('div', { 'class': 'tr' }, E('div', { 'class': 'td', 'colspan': '5' },
-		_('Every wireless network of the controller is rolled out to all nodes. A network on its own interface becomes a segment: its traffic runs to the controller separately, tagged with its own VLAN.'))));
 
 	return E('div', {}, [
 		E('h3', {}, _('Wireless networks')),
 		E('p', { 'class': 'cbi-value-description' },
 			_('The nodes broadcast the same networks as the controller. Turn roaming off for a network whose clients should stay on the access point they picked.')),
-		E('div', { 'class': 'table' }, rows),
+		cards.length ? E('div', { 'class': 'roamd-grid' }, cards) : '',
+		E('p', { 'class': 'cbi-value-description' },
+			_('Every wireless network of the controller is rolled out to all nodes. A network on its own interface becomes a segment: its traffic runs to the controller separately, tagged with its own VLAN.')),
 		status
 	]);
 }
@@ -1862,7 +2152,7 @@ function renderSettings(state) {
 		E('div', { 'class': 'cbi-value-field' }, [
 			nodeUiInput,
 			E('div', { 'class': 'cbi-value-description' },
-				_('Off by default: on a node only the controller is allowed to reach the web interface, everyone else is refused by the node firewall. When enabled, the node address in the table becomes a link.'))
+				_('Off by default: on a node only the controller is allowed to reach the web interface, everyone else is refused by the node firewall. When enabled, a link appears next to the node name.'))
 		])
 	]);
 
@@ -1908,37 +2198,58 @@ function renderController(state) {
 	var counts = state.counts || {};
 	var age = ctrl.last_contact || 0;
 	var link = age > 60
-		? E('span', { 'style': 'color:#c60' }, _('no contact for %t').format(age))
-		: _('in touch');
-
-	var table = E('table', { 'class': 'table cbi-section-table' }, [
-		E('tr', { 'class': 'tr table-titles' }, [
-			E('th', { 'class': 'th' }, _('Controller')),
-			E('th', { 'class': 'th' }, _('IP address')),
-			E('th', { 'class': 'th' }, _('Link')),
-			E('th', { 'class': 'th' }, _('This node')),
-			E('th', { 'class': 'th' }, _('Clients'))
-		])
-	]);
-
-	cbi_update_table(table, [[
-		ctrl.name || ctrl.id || _('unknown'), ctrl.addr || '-', link,
-		state.member_id || '-', counts.clients || 0
-	]]);
+		? E('span', { 'class': 'roamd-state roamd-state-warn' }, _('no contact for %t').format(age))
+		: E('span', { 'class': 'roamd-state roamd-state-ok' }, _('in touch'));
 
 	return E('div', {}, [
 		E('p', {}, _('This node is part of the Wi-Fi system managed by the controller below. The node knows about the controller and about its own clients; the rest of the system is visible on the controller.')),
-		table
+		E('div', { 'class': 'roamd-grid' }, [
+			E('article', { 'class': 'roamd-card' }, [
+				E('div', { 'class': 'roamd-card-head' }, [
+					E('div', { 'class': 'roamd-card-id' }, [
+						E('div', { 'class': 'roamd-title' }, ctrl.name || ctrl.id || _('unknown')),
+						E('div', { 'class': 'roamd-pills' }, [
+							E('span', { 'class': 'roamd-pill' }, _('controller'))
+						])
+					]),
+					link
+				]),
+				common.facts([
+					[ _('Role'), _('controller') ],
+					[ _('IP address'), ctrl.addr || '—' ]
+				])
+			]),
+			E('article', { 'class': 'roamd-card roamd-card-controller' }, [
+				E('div', { 'class': 'roamd-card-head' }, [
+					E('div', { 'class': 'roamd-card-id' }, [
+						E('div', { 'class': 'roamd-title' }, _('This node')),
+						E('div', { 'class': 'roamd-sub' }, state.member_id || '—'),
+						E('div', { 'class': 'roamd-pills' }, [
+							E('span', { 'class': 'roamd-pill' }, _('node'))
+						])
+					])
+				]),
+				common.facts([
+					[ _('Role'), _('node') ],
+					[ _('Clients'), String(counts.clients || 0) ]
+				])
+			])
+		])
 	]);
 }
 
 return view.extend({
 	load: function() {
-		return common.meshStatus().catch(function() { return {}; });
+		return Promise.all([
+			common.meshStatus().catch(function() { return {}; }),
+			uci.load('roamd').catch(function() { return null; })
+		]);
 	},
 
-	render: function(state) {
-		state = state || {};
+	render: function(data) {
+		var state = Array.isArray(data) ? (data[0] || {}) : (data || {});
+
+		common.ensureStyle();
 
 		var container = E('div', {}, [ E('h2', {}, _('Mesh Wi-Fi system')) ]);
 
@@ -2011,14 +2322,21 @@ function buildTabs(state) {
 		nodeNames[m.id] = m.name || m.hostname || m.id;
 	});
 
+	var hash = locationHash();
+
+	if (hash === 'clients' || hash.indexOf('clients/') === 0)
+		clientFocus = hash.indexOf('clients/') === 0 ? decodeURIComponent(hash.slice(8)) : '';
+	else
+		clientFocus = '';
+
 	var panes = [
 		isNode
-			? { title: _('Controller'), node: renderController(state) }
-			: { title: _('Nodes'), node: E('div', { 'id': 'mesh-nodes-pane' }, renderNodes(state)) },
-		{ title: _('Clients'), node: renderClients(state) },
-		{ title: _('Transition log'), node: renderLog() },
-		{ title: _('Settings'), node: renderSettings(state) },
-		{ title: _('Information'), node: renderInfo() }
+			? { key: 'controller', title: _('Controller'), node: renderController(state) }
+			: { key: 'nodes', title: _('Nodes'), node: E('div', { 'id': 'mesh-nodes-pane' }, renderNodes(state)) },
+		{ key: 'clients', title: _('Clients'), node: renderClients(state) },
+		{ key: 'log', title: _('Transition log'), node: renderLog() },
+		{ key: 'settings', title: _('Settings'), node: renderSettings(state) },
+		{ key: 'info', title: _('Information'), node: renderInfo() }
 	];
 
 	var menu = E('ul', { 'class': 'cbi-tabmenu' });
@@ -2031,6 +2349,16 @@ function buildTabs(state) {
 		});
 	}
 
+	meshActivate = function(key) {
+		var idx = 0;
+
+		panes.forEach(function(p, i) {
+			if (p.key === key)
+				idx = i;
+		});
+		activate(idx);
+	};
+
 	panes.forEach(function(p, i) {
 		menu.appendChild(E('li', {}, E('a', {
 			'href': '#',
@@ -2040,7 +2368,13 @@ function buildTabs(state) {
 	});
 
 	var wrap = E('div', {}, [ menu, content ]);
-	activate(0);
+
+	if (hash === 'clients' || hash.indexOf('clients/') === 0)
+		meshActivate('clients');
+	else if (hash === 'nodes')
+		meshActivate('nodes');
+	else
+		activate(0);
 
 	return wrap;
 }
