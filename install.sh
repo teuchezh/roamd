@@ -29,7 +29,7 @@ check_system() {
 
 	. /etc/openwrt_release
 
-	BRANCH="${DISTRIB_RELEASE%.*}"
+	BRANCH=$(printf '%s' "$DISTRIB_RELEASE" | sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
 	ARCH="$DISTRIB_ARCH"
 
 	case "$BRANCH" in
@@ -154,15 +154,15 @@ pkg_version() {
 }
 
 pkg_apply() {
+	if [ "$PKG_IS_APK" -eq 1 ]; then
+		pkg_installed roamd || { apk add "$@"; return; }
+		apk add "$@" && apk upgrade "$@"
+		return
+	fi
+
 	for p in "$@"; do
 		if pkg_installed "$p"; then
-			if [ "$PKG_IS_APK" -eq 1 ]; then
-				apk upgrade "$p" || return 1
-			else
-				opkg upgrade "$p" || return 1
-			fi
-		elif [ "$PKG_IS_APK" -eq 1 ]; then
-			apk add "$p" || return 1
+			opkg upgrade "$p" || return 1
 		else
 			opkg install "$p" || return 1
 		fi
