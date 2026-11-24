@@ -102,11 +102,23 @@ index_feed() {
 		apk="$sdk/staging_dir/host/bin/apk"
 		[ -x "$apk" ] || { echo "в SDK нет apk" >&2; return 1; }
 
-		set -- --allow-untrusted
-		[ -f "$keys/roamd.pem" ] && set -- "$@" --sign-key "$keys/roamd.pem"
+		[ -s "$keys/roamd.pem" ] || {
+			echo "нет ключа подписи APK: настройте секрет APK_SIGN_KEY" >&2
+			return 1
+		}
+		keys=$(cd "$keys" && pwd) || return 1
+		openssl pkey -in "$keys/roamd.pem" -passin pass: -pubout \
+			-out "$keys/roamd-derived.pub" || return 1
+		openssl pkey -pubin -in "$ROOT/keys/roamd-apk.rsa.pub" -pubout \
+			-out "$keys/roamd-expected.pub" || return 1
+		cmp -s "$keys/roamd-derived.pub" "$keys/roamd-expected.pub" || {
+			echo "APK_SIGN_KEY не соответствует keys/roamd-apk.rsa.pub" >&2
+			return 1
+		}
 
-		( cd "$dir" && "$apk" mkndx "$@" -o packages.adb ./*.apk ) || return 1
-		echo "  $branch/$arch: packages.adb$([ -f "$keys/roamd.pem" ] && echo ' (подписан)')"
+		( cd "$dir" && "$apk" mkndx --allow-untrusted \
+			--sign-key "$keys/roamd.pem" -o packages.adb ./*.apk ) || return 1
+		echo "  $branch/$arch: packages.adb (подписан)"
 		return 0
 	fi
 
