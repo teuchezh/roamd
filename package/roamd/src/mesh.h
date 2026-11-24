@@ -18,7 +18,7 @@
 #define MESH_PROBE_ID		0x524d
 #define MESH_URL_MAX		192
 #define MESH_WORD_MAX		12
-#define MESH_ARCH_MAX		24
+#define MESH_ARCH_MAX		32
 #define MESH_BH_ALLOW_LEN	(MESH_ALLOW_MAX * (MESH_ID_MAX + 1))
 #define MESH_BH_LIMITS_LEN	768
 #define MESH_IFACE_MAX		16
@@ -85,6 +85,7 @@ struct mesh_event {
 #define MESH_WPA_MAX		16
 #define MESH_BAND_24		0x1
 #define MESH_BAND_5		0x2
+#define MESH_BAND_6		0x4
 
 struct mesh_network {
 	char id[MESH_NET_ID_LEN];

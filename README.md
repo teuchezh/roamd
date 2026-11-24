@@ -41,15 +41,18 @@
 
 ## Быстрый старт
 
-Нужен OpenWrt ветки 23.05, 24.10 или 25.12 и два радиоинтерфейса разных диапазонов.
+Нужен OpenWrt **25.12** и два радиоинтерфейса разных диапазонов.
+Опубликованы только фиды `feed-25.12-*` репозитория teuchezh/roamd; в них сейчас пакеты
+**1.3.0-r1**. Веток 23.05 и 24.10 в релизах нет, установщик их не принимает.
 На роутере:
 
 ```sh
-wget -O - https://raw.githubusercontent.com/Ground-Zerro/roamd/main/install.sh | sh
+wget -O - https://raw.githubusercontent.com/teuchezh/roamd/main/install.sh | sh
 ```
 
-Скрипт определит ветку и архитектуру, подключит подписанный репозиторий roamd и
-поставит пакеты штатным `opkg` (или `apk` на 25.12). Повторный запуск обновляет.
+Скрипт проверит, что ветка — 25.12, определит архитектуру, подключит подписанный
+репозиторий `https://github.com/teuchezh/roamd/releases/download/feed-25.12-<архитектура>`
+и поставит пакеты штатным `apk`. Повторный запуск обновляет до версии, которая лежит в фиде.
 
 Дальше ничего делать не нужно: служба встанет в автозагрузку, параметры 802.11k/v/r
 пропишутся сами. Если сеть с одинаковым именем на обоих диапазонах уже настроена,
@@ -110,15 +113,19 @@ Nodes are linked by cable or over a hidden wireless backhaul. One binary covers 
 
 ## Quick start
 
-You need OpenWrt 23.05, 24.10 or 25.12 and two radios on different bands. On the router:
+You need OpenWrt **25.12** and two radios on different bands.
+Only the `feed-25.12-*` feeds of teuchezh/roamd are published; they currently contain
+packages **1.3.0-r1**. There are no 23.05 or 24.10 feeds, and the installer rejects those
+branches. On the router:
 
 ```sh
-wget -O - https://raw.githubusercontent.com/Ground-Zerro/roamd/main/install.sh | sh
+wget -O - https://raw.githubusercontent.com/teuchezh/roamd/main/install.sh | sh
 ```
 
-The script detects the branch and the architecture, connects the signed roamd repository and
-installs the packages with the system's own `opkg` (or `apk` on 25.12). Running it again
-upgrades them.
+The script checks that the branch is 25.12, detects the architecture, connects the signed
+repository `https://github.com/teuchezh/roamd/releases/download/feed-25.12-<architecture>`
+and installs the packages with the system's `apk`. Running it again upgrades to whatever
+version is in that feed.
 
 Nothing else has to be done: the service is added to autostart and the 802.11k/v/r options
 are written on their own. If a network with the same name is already configured on both

@@ -296,7 +296,7 @@ static bool sta_should_leave(struct roam_sta *sta, struct roam_bss *bss,
 		return there > here;
 	}
 
-	if (want == BAND_HIGH && !sta->band[bss->band].ht)
+	if (want == BAND_HIGH && bss->band == BAND_LOW && !sta->band[bss->band].ht)
 		return false;
 
 	if (there < config.rssi_good)

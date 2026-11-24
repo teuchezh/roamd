@@ -55,6 +55,8 @@ static const char *band_str(uint8_t band)
 		return "2.4";
 	if (band == BAND_HIGH)
 		return "5";
+	if (band == BAND_6)
+		return "6";
 	return "";
 }
 
@@ -64,6 +66,8 @@ static uint8_t band_parse(struct blob_attr *attr)
 
 	if (!strcmp(s, "5"))
 		return BAND_HIGH;
+	if (!strcmp(s, "6"))
+		return BAND_6;
 	if (!strcmp(s, "2.4"))
 		return BAND_LOW;
 	return MESH_BAND_NA;

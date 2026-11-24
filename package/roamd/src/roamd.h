@@ -42,6 +42,7 @@
 enum roam_band {
 	BAND_LOW,
 	BAND_HIGH,
+	BAND_6,
 	BAND_MAX
 };
 
@@ -160,6 +161,8 @@ struct roam_sta {
 
 	uint64_t connected_since;
 	uint64_t security_since;
+	uint64_t security_wait;
+	bool security_pending;
 	const char *security;
 	uint64_t left_at;
 	uint8_t left_band;
@@ -190,6 +193,8 @@ extern uint64_t roam_now;
 void roam_time_update(void);
 const char *roam_band_name(enum roam_band band);
 uint8_t roam_band_bit(enum roam_band band);
+enum roam_band roam_band_from_freq(int freq);
+const char *roam_signal_field(enum roam_band band, bool age);
 
 void roam_device_setup(void);
 enum roam_lock roam_device_lock(const uint8_t *addr);
@@ -237,7 +242,7 @@ bool roam_bss_matches(const struct roam_bss *bss);
 void roam_bss_recheck(void);
 void roam_neighbors_resync(void);
 int roam_bss_invoke(struct roam_bss *bss, const char *method, struct blob_buf *buf);
-void roam_bss_sta_security_query(const struct roam_bss *bss, const uint8_t *addr, uint64_t since);
+bool roam_bss_sta_security_query(const struct roam_bss *bss, const uint8_t *addr, uint64_t since);
 
 void roam_sta_setup(void);
 struct roam_sta *roam_sta_get(const uint8_t *addr, bool create);

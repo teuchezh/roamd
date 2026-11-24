@@ -290,7 +290,14 @@ const char *mesh_self_node_id(void)
 
 void mesh_ft_nasid(const char *node, uint8_t band, char *out, size_t len)
 {
-	snprintf(out, len, "%s-%s", node, band == MESH_BAND_5 ? "5" : "2");
+	const char *tag = "2";
+
+	if (band == MESH_BAND_5)
+		tag = "5";
+	else if (band == MESH_BAND_6)
+		tag = "6";
+
+	snprintf(out, len, "%s-%s", node, tag);
 }
 
 bool mesh_chain_has(const char *chain, const char *id)
@@ -313,12 +320,24 @@ uint8_t mesh_band_bit(const char *name)
 	if (!name || !name[0])
 		return 0;
 
-	return name[0] == '2' ? MESH_BAND_24 : MESH_BAND_5;
+	if (name[0] == '2')
+		return MESH_BAND_24;
+	if (name[0] == '6')
+		return MESH_BAND_6;
+	if (name[0] == '5')
+		return MESH_BAND_5;
+
+	return 0;
 }
 
 enum roam_band mesh_band_from_bit(uint8_t bit)
 {
-	return bit == MESH_BAND_5 ? BAND_HIGH : BAND_LOW;
+	if (bit == MESH_BAND_5)
+		return BAND_HIGH;
+	if (bit == MESH_BAND_6)
+		return BAND_6;
+
+	return BAND_LOW;
 }
 
 static uint8_t local_band_mask(void)
@@ -546,8 +565,15 @@ unsigned int mesh_neighbor_channels(const char *ssid, enum roam_band band,
 			continue;
 
 		low = ch.op_class >= 81 && ch.op_class <= 84;
-		if (low != (band == BAND_LOW))
+		if (band == BAND_LOW) {
+			if (!low)
+				continue;
+		} else if (band == BAND_6) {
+			if (ch.op_class < 131 || ch.op_class > 136)
+				continue;
+		} else if (low || (ch.op_class >= 131 && ch.op_class <= 136)) {
 			continue;
+		}
 
 		for (j = 0; j < n; j++)
 			if (list[j].op_class == ch.op_class && list[j].channel == ch.channel)
@@ -648,13 +674,18 @@ static const char *assoc_security(const struct assoc_ctx *ctx, const uint8_t *ad
 	if (!sta || sta->bss != ctx->bss)
 		return ctx->enc;
 
-	if (sta->security_since != sta->connected_since) {
-		sta->security_since = sta->connected_since;
+	if (sta->security_since == sta->connected_since && sta->security)
+		return sta->security;
+
+	if (!sta->security_pending || sta->security_wait != sta->connected_since) {
 		sta->security = NULL;
-		roam_bss_sta_security_query(ctx->bss, addr, sta->connected_since);
+		if (roam_bss_sta_security_query(ctx->bss, addr, sta->connected_since)) {
+			sta->security_pending = true;
+			sta->security_wait = sta->connected_since;
+		}
 	}
 
-	return sta->security ? sta->security : ctx->enc;
+	return ctx->enc;
 }
 
 static void assoc_cb(struct ubus_request *req, int type, struct blob_attr *msg)

@@ -1913,7 +1913,7 @@ static const char *node_uplink_band(void)
 	if (!cmd_line(cmd, freq, sizeof(freq)) || !freq[0])
 		return "";
 
-	return atoi(freq) < 3000 ? "2.4" : "5";
+	return roam_band_name(roam_band_from_freq(atoi(freq)));
 }
 
 static const char *node_connection(void)
@@ -2241,11 +2241,9 @@ void mesh_node_report(struct blob_buf *b)
 					if (signal == ROAMD_NO_SIGNAL)
 						continue;
 
-					blobmsg_add_u32(b, band == BAND_LOW ?
-							"signal_24" : "signal_5",
+					blobmsg_add_u32(b, roam_signal_field(band, false),
 							(uint32_t)signal);
-					blobmsg_add_u32(b, band == BAND_LOW ?
-							"signal_24_age" : "signal_5_age", age);
+					blobmsg_add_u32(b, roam_signal_field(band, true), age);
 				}
 
 				node_measured_blob(b, sta);

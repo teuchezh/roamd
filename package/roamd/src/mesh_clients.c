@@ -114,6 +114,8 @@ static void client_touch(struct client_rec *c, const char *node, const char *ban
 			 uint32_t rate, const char *std, uint32_t width, uint32_t nss,
 			 uint64_t rx, uint64_t tx, uint32_t now)
 {
+	enum roam_band i;
+
 	strncpy(c->node, node, sizeof(c->node) - 1);
 	c->node[sizeof(c->node) - 1] = '\0';
 	c->band[0] = '\0';
@@ -130,8 +132,10 @@ static void client_touch(struct client_rec *c, const char *node, const char *ban
 	c->rx_bytes = rx;
 	c->tx_bytes = tx;
 	c->last_seen = now;
-	c->sig[BAND_LOW] = ROAMD_NO_SIGNAL;
-	c->sig[BAND_HIGH] = ROAMD_NO_SIGNAL;
+	for (i = 0; i < BAND_MAX; i++) {
+		c->sig[i] = ROAMD_NO_SIGNAL;
+		c->sig_age[i] = 0;
+	}
 	c->state = CLIENT_ONLINE;
 }
 
@@ -249,6 +253,7 @@ static void refresh_member(const char *id, uint32_t now)
 		struct blob_attr *c[__CL_MAX];
 		struct ether_addr *ea;
 		struct client_rec *rec;
+		enum roam_band band;
 		uint32_t connected;
 
 		if (blobmsg_type(cur) != BLOBMSG_TYPE_TABLE)
@@ -280,10 +285,10 @@ static void refresh_member(const char *id, uint32_t now)
 		if (c[CL_ENC])
 			strncpy(rec->enc, blobmsg_get_string(c[CL_ENC]), sizeof(rec->enc) - 1);
 
-		rec->sig[BAND_LOW] = (int)num_field(cur, "signal_24");
-		rec->sig[BAND_HIGH] = (int)num_field(cur, "signal_5");
-		rec->sig_age[BAND_LOW] = (uint32_t)num_field(cur, "signal_24_age");
-		rec->sig_age[BAND_HIGH] = (uint32_t)num_field(cur, "signal_5_age");
+		for (band = 0; band < BAND_MAX; band++) {
+			rec->sig[band] = (int)num_field(cur, roam_signal_field(band, false));
+			rec->sig_age[band] = (uint32_t)num_field(cur, roam_signal_field(band, true));
+		}
 	}
 
 	node_settle(id);
@@ -634,6 +639,7 @@ void mesh_clients_dump(struct blob_buf *b)
 	for (i = 0; i < MESH_CLIENT_MAX; i++) {
 		struct client_rec *c = &clients[i];
 		enum roam_lock lock;
+		enum roam_band band;
 		void *e;
 
 		if (!c->used)
@@ -677,13 +683,12 @@ void mesh_clients_dump(struct blob_buf *b)
 		    !client_settled(c) && !mesh_poll_has_place(c->addr))
 			blobmsg_add_u8(b, "no_place", 1);
 
-		if (c->sig[BAND_LOW] != ROAMD_NO_SIGNAL) {
-			blobmsg_add_u32(b, "signal_24", (uint32_t)c->sig[BAND_LOW]);
-			blobmsg_add_u32(b, "signal_24_age", c->sig_age[BAND_LOW]);
-		}
-		if (c->sig[BAND_HIGH] != ROAMD_NO_SIGNAL) {
-			blobmsg_add_u32(b, "signal_5", (uint32_t)c->sig[BAND_HIGH]);
-			blobmsg_add_u32(b, "signal_5_age", c->sig_age[BAND_HIGH]);
+		for (band = 0; band < BAND_MAX; band++) {
+			if (c->sig[band] == ROAMD_NO_SIGNAL)
+				continue;
+
+			blobmsg_add_u32(b, roam_signal_field(band, false), (uint32_t)c->sig[band]);
+			blobmsg_add_u32(b, roam_signal_field(band, true), c->sig_age[band]);
 		}
 
 		blobmsg_add_u32(b, "last_seen", c->last_seen);

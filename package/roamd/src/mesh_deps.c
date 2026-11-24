@@ -13,6 +13,8 @@
 #define DEPS_STATE	"/tmp/roamd/deps"
 #define DEPS_TRIES	3
 #define PKG_TIMEOUT	240000
+#define WPAD_STAGE_NEW	"/tmp/roamd-wpad-new"
+#define WPAD_STAGE_OLD	"/tmp/roamd-wpad-old"
 
 static const char *const wpad_full[] = {
 	"wpad", "wpad-openssl", "wpad-mbedtls", "wpad-wolfssl"
@@ -149,17 +151,84 @@ static void deps_state(const char *text)
 	roam_log(ROAM_L_INFO, "deps: %s", text);
 }
 
-static bool pkg_cmd(const char *action, const char *name)
+static bool pkg_locked(const char *script)
 {
-	char cmd[256];
+	char cmd[768];
 	char *argv[4] = { "/bin/sh", "-c", cmd, NULL };
+	int n;
 
-	snprintf(cmd, sizeof(cmd),
-		 "pkg_run() { ( exec 9>/tmp/roamd-pkg.lock; w=0; until flock -n 9; do "
-		 "[ \"$w\" -lt 120 ] || exit 1; sleep 2; w=$((w + 2)); done; \"$@\" ); }; "
-		 "pkg_run %s %s >/dev/null 2>&1", action, name ? name : "");
+	n = snprintf(cmd, sizeof(cmd),
+		     "( exec 9>/tmp/roamd-pkg.lock; w=0; until flock -n 9; do "
+		     "[ \"$w\" -lt 120 ] || exit 1; sleep 2; w=$((w + 2)); done; "
+		     "%s ) >/dev/null 2>&1", script);
+	if (n < 0 || (size_t)n >= sizeof(cmd))
+		return false;
 
 	return mesh_run(argv, -1, NULL, 0, PKG_TIMEOUT) == 0;
+}
+
+static bool pkg_cmd(const char *action, const char *name)
+{
+	char script[192];
+
+	snprintf(script, sizeof(script), "%s %s", action, name ? name : "");
+
+	return pkg_locked(script);
+}
+
+/* Download name into an empty dir. Success means the package file is on disk. */
+static bool pkg_download(bool apk, const char *name, const char *dir)
+{
+	char script[384];
+	const char *suffix = apk ? "apk" : "ipk";
+	int n;
+
+	if (apk)
+		n = snprintf(script, sizeof(script),
+			     "rm -rf '%s' && mkdir -p '%s' && apk fetch -o '%s' '%s' && "
+			     "find '%s' -maxdepth 1 -type f -name '*.%s' | grep -q .",
+			     dir, dir, dir, name, dir, suffix);
+	else
+		n = snprintf(script, sizeof(script),
+			     "rm -rf '%s' && mkdir -p '%s' && cd '%s' && opkg download '%s' && "
+			     "find '%s' -maxdepth 1 -type f -name '*.%s' | grep -q .",
+			     dir, dir, dir, name, dir, suffix);
+
+	if (n < 0 || (size_t)n >= sizeof(script))
+		return false;
+
+	return pkg_locked(script);
+}
+
+static bool pkg_install_staged(bool apk, const char *dir)
+{
+	char script[384];
+	const char *suffix = apk ? "apk" : "ipk";
+	int n;
+
+	if (apk)
+		n = snprintf(script, sizeof(script),
+			     "f=$(find '%s' -maxdepth 1 -type f -name '*.%s' | head -n 1); "
+			     "[ -n \"$f\" ] && apk add --allow-untrusted \"$f\"",
+			     dir, suffix);
+	else
+		n = snprintf(script, sizeof(script),
+			     "f=$(find '%s' -maxdepth 1 -type f -name '*.%s' | head -n 1); "
+			     "[ -n \"$f\" ] && opkg install \"$f\"",
+			     dir, suffix);
+
+	if (n < 0 || (size_t)n >= sizeof(script))
+		return false;
+
+	return pkg_locked(script);
+}
+
+static void pkg_stage_clear(void)
+{
+	char *argv[4] = { "/bin/sh", "-c",
+			  "rm -rf " WPAD_STAGE_NEW " " WPAD_STAGE_OLD, NULL };
+
+	mesh_run(argv, -1, NULL, 0, 10000);
 }
 
 static void wpad_reload(void)
@@ -213,17 +282,31 @@ int mesh_deps_ensure(bool need_only)
 		return 1;
 	}
 
-	if (apk) {
-		pkg_cmd("apk del", cur);
+	/*
+	 * The full package has to be a file on disk before the running wpad is
+	 * removed. A failed download leaves the current hostapd in place.
+	 */
+	if (!pkg_download(apk, want, WPAD_STAGE_NEW)) {
+		pkg_stage_clear();
+		snprintf(text, sizeof(text),
+			 "full %s was not downloaded, %s kept — 802.11v unavailable", want, cur);
+		deps_state(text);
 
-		if (!pkg_cmd("apk add", want))
-			pkg_cmd("apk add", cur);
-	} else {
+		return 1;
+	}
+
+	pkg_download(apk, cur, WPAD_STAGE_OLD);
+
+	if (apk)
+		pkg_cmd("apk del", cur);
+	else
 		pkg_cmd("opkg remove --force-depends", cur);
 
-		if (!pkg_cmd("opkg install", want))
-			pkg_cmd("opkg install", cur);
-	}
+	if (!pkg_install_staged(apk, WPAD_STAGE_NEW) &&
+	    !pkg_install_staged(apk, WPAD_STAGE_OLD))
+		pkg_cmd(apk ? "apk add" : "opkg install", cur);
+
+	pkg_stage_clear();
 
 	cur = installed_one(wpad_any, ARRAY_SIZE(wpad_any), version, sizeof(version));
 

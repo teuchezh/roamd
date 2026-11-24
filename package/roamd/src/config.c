@@ -90,6 +90,7 @@ static void roam_config_init(void)
 	config.age_time = 90000;
 	config.check_time[BAND_LOW] = 8000;
 	config.check_time[BAND_HIGH] = 4000;
+	config.check_time[BAND_6] = 4000;
 	config.poll_interval = 2000;
 	config.deny_time = 15000;
 	config.steer_retries = 3;

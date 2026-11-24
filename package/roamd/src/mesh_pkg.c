@@ -74,6 +74,18 @@ bool mesh_pkg_feed_url(const char *branch, const char *arch, char *out, size_t l
 	if (!pkg_url(tmpl, sizeof(tmpl)))
 		return false;
 
+	/*
+	 * teuchezh/roamd publishes feed-25.12-* only. A custom pkg_url may
+	 * host other branches, so the limit applies to the built-in address.
+	 */
+	if (!strcmp(mesh.pkg_url, MESH_PKG_URL_DEFAULT) && strcmp(branch ? branch : "", "25.12")) {
+		roam_log(ROAM_L_ERR,
+			 "mesh: no published package feed for OpenWrt %s (only 25.12 is published)",
+			 branch ? branch : "?");
+
+		return false;
+	}
+
 	if (!strstr(tmpl, "%b") && !strstr(tmpl, "%a")) {
 		snprintf(out, len, "%s/%s/%s", tmpl, branch, arch);
 

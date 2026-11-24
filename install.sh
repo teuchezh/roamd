@@ -32,10 +32,16 @@ check_system() {
 	BRANCH=$(printf '%s' "$DISTRIB_RELEASE" | sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
 	ARCH="$DISTRIB_ARCH"
 
+	# Published teuchezh/roamd feeds are feed-25.12-* only (packages 1.3.0-r1).
+	# 23.05 and 24.10 can be built from this tree, but no feed is published for them.
 	case "$BRANCH" in
-		23.05|24.10|25.12) ;;
+		25.12) ;;
+		23.05|24.10)
+			err "Пакеты roamd для OpenWrt $BRANCH не опубликованы. Репозиторий teuchezh/roamd сейчас содержит только фиды ветки 25.12."
+			exit 1
+			;;
 		*)
-			err "OpenWrt $DISTRIB_RELEASE не поддерживается (нужна ветка 23.05, 24.10 или 25.12)"
+			err "OpenWrt $DISTRIB_RELEASE не поддерживается. Установщик ставит пакеты только для OpenWrt 25.12."
 			exit 1
 			;;
 	esac
