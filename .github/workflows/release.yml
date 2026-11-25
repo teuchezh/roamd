@@ -24,7 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check signing secrets
+      - id: secrets
+        name: Check signing secrets
         env:
           BRANCHES: ${{ github.event.inputs.branches }}
           APK_SIGN_KEY: ${{ secrets.APK_SIGN_KEY }}
@@ -32,21 +33,29 @@ jobs:
         run: |
           wanted="$BRANCHES"
           [ -n "$wanted" ] || wanted=$(awk '{ print $1 }' targets/branches.txt)
+          selected=
           for branch in $wanted; do
             case "$branch" in
               25.12)
                 [ -n "$APK_SIGN_KEY" ] || { echo "::error::Missing APK_SIGN_KEY repository secret"; exit 1; }
                 ;;
               23.05|24.10)
-                [ -n "$USIGN_SECRET" ] || { echo "::error::Missing USIGN_SECRET repository secret"; exit 1; }
+                if [ -z "$USIGN_SECRET" ]; then
+                  echo "::warning::OpenWrt $branch skipped: USIGN_SECRET is not set"
+                  continue
+                fi
                 ;;
             esac
+            selected="$selected $branch"
           done
+          selected=${selected# }
+          [ -n "$selected" ] || { echo "::error::No OpenWrt branches left to build"; exit 1; }
+          echo "branches=$selected" >> "$GITHUB_OUTPUT"
 
       - id: build
         run: |
-          wanted="${{ github.event.inputs.branches }}"
-          [ -n "$wanted" ] || wanted=$(awk '{ print $1 }' targets/branches.txt)
+          wanted="${{ steps.secrets.outputs.branches }}"
+          [ -n "$wanted" ] || { echo "список веток пуст" >&2; exit 1; }
 
           {
             printf 'jobs='
@@ -62,7 +71,7 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             version="${GITHUB_REF_NAME#v}"
           else
-            version="1.3.0-r3"
+            version="1.3.0-r4"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
