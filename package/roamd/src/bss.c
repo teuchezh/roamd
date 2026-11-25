@@ -371,7 +371,8 @@ static bool client_rrm_beacon(struct blob_attr *client)
 	if (!list || !blobmsg_data_len(list))
 		return false;
 
-	return !!(blobmsg_get_u32(blobmsg_data(list)) & 0x70);
+	/* beacon_req_send() requests active measurements (mode 1). */
+	return !!(blobmsg_get_u32(blobmsg_data(list)) & 0x20);
 }
 
 static uint64_t blob_u64(struct blob_attr *attr)
