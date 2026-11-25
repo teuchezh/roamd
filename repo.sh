@@ -139,6 +139,22 @@ release_assets() {
 	gh api --paginate "repos/{owner}/{repo}/releases/$id/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"'
 }
 
+release_upload() {
+	tag="$1"
+	shift
+
+	for file in "$@"; do
+		[ -f "$file" ] || continue
+		name=$(basename "$file")
+		if gh release upload "$tag" "$file" --clobber; then
+			continue
+		fi
+		# gh retries a finished upload and then reports that the name exists.
+		gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null | grep -Fxq "$name" && continue
+		gh release upload "$tag" "$file" --clobber || return 1
+	done
+}
+
 release_prune() {
 	tag="$1"
 	keep="$2"
@@ -178,7 +194,7 @@ publish_feeds() {
 		gh release view "$tag" >/dev/null 2>&1 ||
 			gh release create "$tag" --title "$tag" --notes "Репозиторий пакетов roamd: $tag" --prerelease
 
-		gh release upload "$tag" "$dir"/* --clobber || return 1
+		release_upload "$tag" "$dir"/* || return 1
 		release_prune "$tag" "$dir" "" || return 1
 		echo "  $tag"
 
@@ -198,7 +214,7 @@ publish_feeds() {
 		gh release create "$tag" --title "roamd $version" --notes "Пакеты roamd $version. В релиз попадают только ветки, собранные в этом запуске."
 	fi
 
-	gh release upload "$tag" "$all"/* --clobber || return 1
+	release_upload "$tag" "$all"/* || return 1
 	echo "  $tag ($(ls "$all" | wc -l) файлов)"
 }
 
