@@ -732,6 +732,56 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.default = '20000';
 
+		o = sub.option(form.Value, 'bandwidth_threshold', _('Receive rate limit'),
+			_('Do not steer a client while the receive rate on its current access point stays above this many Mbit/s. 0 turns the check off.'));
+		o.datatype = 'uinteger';
+		o.default = '6';
+
+		o = sub.option(form.Flag, 'use_station_count', _('Prefer the less crowded access point'),
+			_('When the signal is a tie, choose the access point with fewer connected clients.'));
+		o.default = '0';
+
+		o = sub.option(form.Value, 'max_station_diff', _('Client-count difference'),
+			_('The other access point wins that tie only when it has more than this many fewer clients. The client itself is not counted on its current access point.'));
+		o.datatype = 'range(1,100)';
+		o.default = '1';
+		o.depends('use_station_count', '1');
+
+		o = sub.option(form.Value, 'load_balancing_threshold', _('Load-balance difference'),
+			_('Ask a client to move when another access point has at least this many fewer clients and the signal there is not worse. 0 turns this off.'));
+		o.datatype = 'uinteger';
+		o.default = '0';
+
+		o = sub.option(form.Value, 'chan_util_val', _('Quiet channel'),
+			_('Channel utilization at or below this (0–255, as hostapd reports it) counts as a quiet channel when the signal is a tie.'));
+		o.datatype = 'range(0,255)';
+		o.default = '140';
+
+		o = sub.option(form.Value, 'max_chan_util_val', _('Busy channel'),
+			_('Channel utilization above this (0–255) makes an access point a worse target. A small signal gain does not move a client there, and a client on a channel this busy may be asked to move to a quieter one.'));
+		o.datatype = 'range(0,255)';
+		o.default = '170';
+
+		o = sub.option(form.Value, 'chan_util_avg_period', _('Utilization average'),
+			_('How many hostapd samples to average before the channel-utilization figure is updated.'));
+		o.datatype = 'range(1,60)';
+		o.default = '3';
+
+		o = sub.option(form.Value, 'load_kick_threshold', _('Channel load limit'),
+			_('Also treat a channel as busy when its utilization is above this percent and it has at least the minimum number of clients. The client is asked to move, not disconnected. 0 turns this off.'));
+		o.datatype = 'range(0,100)';
+		o.default = '0';
+
+		o = sub.option(form.Value, 'load_kick_min_clients', _('Clients before load matters'),
+			_('The channel-load percent is ignored until the access point has at least this many clients.'));
+		o.datatype = 'uinteger';
+		o.default = '10';
+
+		o = sub.option(form.Value, 'initial_connect_delay', _('Probe response delay'),
+			_('Milliseconds to wait before answering probes from a client that has just been heard, so neighbouring access points hear it too. Authentication and association are not delayed. 0 answers at once.'));
+		o.datatype = 'uinteger';
+		o.default = '0';
+
 		o = sub.option(form.ListValue, 'log_level', _('Log level'));
 		o.value('0', _('Errors only'));
 		o.value('1', _('Normal'));

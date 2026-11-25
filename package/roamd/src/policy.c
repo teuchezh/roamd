@@ -271,6 +271,95 @@ bool roam_policy_can_steer(const struct roam_sta *sta)
 	return !sta->last_steer || roam_now - sta->last_steer >= STEER_RETRY_INTERVAL;
 }
 
+/* hostapd reports the last receive bitrate in kbit/s. Dawn treats a rate above
+ * bandwidth_threshold (Mbit/s) as an active transfer and leaves the client. */
+bool roam_policy_rate_busy(uint32_t rx_kbit, bool known)
+{
+	uint32_t limit;
+
+	if (!known || config.bandwidth_threshold <= 0)
+		return false;
+
+	if (config.bandwidth_threshold > 4000000)
+		return false;
+
+	limit = (uint32_t)config.bandwidth_threshold * 1000;
+
+	return rx_kbit > limit;
+}
+
+/* Hold the probe response until neighbouring APs have also heard the client.
+ * Auth and assoc are not held: this is not a rejection. */
+bool roam_policy_delay_probe(const struct roam_sta *sta)
+{
+	if (!config.initial_connect_delay || !sta || sta->bss || !sta->created)
+		return false;
+
+	return roam_now - sta->created < config.initial_connect_delay;
+}
+
+bool roam_air_busy(const struct roam_air *air)
+{
+	bool util_busy = false;
+
+	if (!air)
+		return false;
+
+	if (air->util >= 0 && config.max_chan_util_val > 0 &&
+	    air->util > config.max_chan_util_val)
+		util_busy = true;
+
+	if (config.load_kick_threshold && air->util >= 0 && air->stations >= 0 &&
+	    air->stations >= (int)config.load_kick_min_clients &&
+	    air->util * 100 / 255 > (int)config.load_kick_threshold)
+		util_busy = true;
+
+	return util_busy;
+}
+
+/* 1 quiet, 0 ordinary or unknown, -1 busy. Quiet only breaks a tie. */
+int roam_air_rank(const struct roam_air *air)
+{
+	if (roam_air_busy(air))
+		return -1;
+
+	if (air && air->util >= 0 && config.chan_util_val > 0 &&
+	    air->util <= config.chan_util_val)
+		return 1;
+
+	return 0;
+}
+
+/* Dawn: the other AP wins a tie when it has more than max_station_diff fewer
+ * clients. The client itself is not counted on the AP it is already on. */
+bool roam_air_fewer_stations(const struct roam_air *cur, const struct roam_air *neu)
+{
+	int own, other;
+
+	if (!config.use_station_count || !cur || !neu)
+		return false;
+
+	if (cur->stations < 0 || neu->stations < 0)
+		return false;
+
+	own = cur->stations > 0 ? cur->stations - 1 : 0;
+	other = neu->stations;
+
+	return own - other > config.max_station_diff;
+}
+
+/* usteer: n_new + load_balancing_threshold <= n_cur. 0 disables it. */
+bool roam_air_lighter(const struct roam_air *cur, const struct roam_air *neu)
+{
+	if (!config.load_balancing_threshold || !cur || !neu)
+		return false;
+
+	if (cur->stations < 0 || neu->stations < 0)
+		return false;
+
+	return neu->stations + (int)config.load_balancing_threshold <= cur->stations;
+}
+
 static bool sta_should_leave(struct roam_sta *sta, struct roam_bss *bss,
 			     struct roam_bss *target)
 {
@@ -330,11 +419,16 @@ void roam_policy_run(struct roam_bss *bss)
 	if (!config.bss_transition || !config.band_steering || config.prefer == PREFER_NONE)
 		return;
 
-	target = roam_bss_target(bss);
+	target = roam_bss_steer_target(bss);
 	if (!target)
 		return;
 
 	avl_for_each_element(&roam_sta_tree, sta, avl) {
+		struct roam_air cur_air, neu_air;
+		bool signal_leave, leave, load_only = false;
+		int here, there, gain;
+		bool dying;
+
 		if (sta->bss != bss)
 			continue;
 
@@ -357,11 +451,51 @@ void roam_policy_run(struct roam_bss *bss)
 		if (!band_info_fresh(&sta->band[target->band], target->band))
 			policy_beacon_request(sta, bss, target, &beacon_budget);
 
-		if (!sta_should_leave(sta, bss, target))
+		roam_bss_air(bss, &cur_air);
+		roam_bss_air(target, &neu_air);
+		here = sta->band[bss->band].signal;
+		there = sta->band[target->band].signal;
+		dying = here != ROAMD_NO_SIGNAL && here < config.kick_rssi;
+		gain = (here == ROAMD_NO_SIGNAL || there == ROAMD_NO_SIGNAL) ? 0 : there - here;
+
+		signal_leave = sta_should_leave(sta, bss, target);
+		leave = signal_leave;
+
+		/* a small signal gain does not justify a busier channel */
+		if (leave && roam_air_busy(&neu_air) && !roam_air_busy(&cur_air) &&
+		    !dying && gain < config.rssi_diff)
+			leave = false;
+
+		/* a busy channel is a reason to ask for a quieter one */
+		if (!leave && roam_air_busy(&cur_air) && !roam_air_busy(&neu_air) &&
+		    band_info_fresh(&sta->band[target->band], target->band) &&
+		    there >= config.rssi_low &&
+		    (here == ROAMD_NO_SIGNAL || here - there < config.rssi_diff)) {
+			leave = true;
+			load_only = true;
+		}
+
+		if (!leave && roam_air_lighter(&cur_air, &neu_air) && !roam_air_busy(&neu_air) &&
+		    band_info_fresh(&sta->band[target->band], target->band) &&
+		    there >= config.rssi_low &&
+		    (here == ROAMD_NO_SIGNAL || there >= here)) {
+			leave = true;
+			load_only = true;
+		}
+
+		if (!leave)
 			continue;
 
+		if (roam_policy_rate_busy(sta->rx_rate_kbit, sta->rx_rate_known)) {
+			roam_log(ROAM_L_DEBUG,
+				 "roamd: %s receives %u Mbit/s on %s, not steering",
+				 sta->mac, sta->rx_rate_kbit / 1000, bss->ifname);
+			continue;
+		}
+
 		if (!sta->btm) {
-			if (config.allow_kick)
+			/* load only asks; it never disconnects */
+			if (signal_leave && !load_only && config.allow_kick)
 				roam_policy_kick(sta, bss);
 			continue;
 		}

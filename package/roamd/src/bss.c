@@ -161,6 +161,111 @@ struct roam_bss *roam_bss_target(const struct roam_bss *from)
 	return other;
 }
 
+static unsigned int blob_uint(struct blob_attr *attr)
+{
+	switch (blobmsg_type(attr)) {
+	case BLOBMSG_TYPE_INT8:
+		return blobmsg_get_u8(attr);
+	case BLOBMSG_TYPE_INT16:
+		return blobmsg_get_u16(attr);
+	case BLOBMSG_TYPE_INT32:
+		return blobmsg_get_u32(attr);
+	default:
+		return 0;
+	}
+}
+
+static struct blob_attr *blob_named(struct blob_attr *table, const char *name)
+{
+	struct blob_attr *cur;
+	int rem;
+
+	if (!table)
+		return NULL;
+
+	blobmsg_for_each_attr(cur, table, rem)
+		if (!strcmp(blobmsg_name(cur), name))
+			return cur;
+
+	return NULL;
+}
+
+static void bss_util_note(struct roam_bss *bss, unsigned int util)
+{
+	unsigned int period = config.chan_util_avg_period ? config.chan_util_avg_period : 1;
+
+	if (util > 255)
+		util = 255;
+
+	bss->chan_util_sum += util;
+	bss->chan_util_samples++;
+
+	if (!bss->chan_util_known) {
+		bss->chan_util = (int)util;
+		bss->chan_util_known = true;
+	}
+
+	if (bss->chan_util_samples < period)
+		return;
+
+	bss->chan_util = (int)(bss->chan_util_sum / bss->chan_util_samples);
+	bss->chan_util_sum = 0;
+	bss->chan_util_samples = 0;
+	bss->chan_util_known = true;
+}
+
+static void bss_note_airtime(struct roam_bss *bss, struct blob_attr *airtime)
+{
+	struct blob_attr *util = blob_named(airtime, "utilization");
+
+	if (!util)
+		return;
+
+	bss_util_note(bss, blob_uint(util));
+}
+
+void roam_bss_air(const struct roam_bss *bss, struct roam_air *out)
+{
+	out->util = bss->chan_util_known ? bss->chan_util : -1;
+	out->stations = bss->stations_known ? bss->stations : -1;
+}
+
+/* same band the band-preference pick would use, then the quieter / lighter BSS */
+struct roam_bss *roam_bss_steer_target(const struct roam_bss *from)
+{
+	struct roam_bss *pick = roam_bss_target(from);
+	struct roam_bss *bss, *best;
+	struct roam_air best_air, air;
+
+	if (!pick)
+		return NULL;
+
+	best = pick;
+	roam_bss_air(best, &best_air);
+
+	list_for_each_entry(bss, &roam_bss_list, list) {
+		int rank;
+
+		if (bss == best || bss == from || !roam_bss_matches(bss))
+			continue;
+		if (bss->band != pick->band || strcmp(bss->ssid, from->ssid))
+			continue;
+
+		roam_bss_air(bss, &air);
+		rank = roam_air_rank(&air) - roam_air_rank(&best_air);
+		if (rank > 0 || (rank == 0 && roam_air_fewer_stations(&best_air, &air))) {
+			best = bss;
+			best_air = air;
+		} else if (rank == 0 && roam_air_lighter(&best_air, &air) &&
+			   !roam_air_lighter(&air, &best_air)) {
+			best = bss;
+			best_air = air;
+		}
+	}
+
+	return best;
+}
+
 static void status_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 {
 	enum {
@@ -170,6 +275,7 @@ static void status_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 		ST_FREQ,
 		ST_CHANNEL,
 		ST_OP_CLASS,
+		ST_AIRTIME,
 		__ST_MAX
 	};
 	static const struct blobmsg_policy policy[__ST_MAX] = {
@@ -179,6 +285,7 @@ static void status_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 		[ST_FREQ] = { "freq", BLOBMSG_TYPE_INT32 },
 		[ST_CHANNEL] = { "channel", BLOBMSG_TYPE_INT32 },
 		[ST_OP_CLASS] = { "op_class", BLOBMSG_TYPE_INT32 },
+		[ST_AIRTIME] = { "airtime", BLOBMSG_TYPE_TABLE },
 	};
 	struct blob_attr *tb[__ST_MAX];
 	struct roam_bss *bss = req->priv;
@@ -207,6 +314,9 @@ static void status_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 
 	if (tb[ST_OP_CLASS])
 		bss->op_class = blobmsg_get_u32(tb[ST_OP_CLASS]);
+
+	if (tb[ST_AIRTIME])
+		bss_note_airtime(bss, tb[ST_AIRTIME]);
 }
 
 static bool client_ext_capa_btm(struct blob_attr *client)
@@ -243,7 +353,23 @@ static bool client_rrm_beacon(struct blob_attr *client)
 	return !!(blobmsg_get_u32(blobmsg_data(list)) & 0x70);
 }
 
-static void client_update(struct roam_bss *bss, struct blob_attr *client, const char *mac,
+static void client_rate(struct roam_sta *sta, struct blob_attr *client)
+{
+	struct blob_attr *rate, *rx;
+
+	rate = blob_named(client, "rate");
+	if (!rate || blobmsg_type(rate) != BLOBMSG_TYPE_TABLE)
+		return;
+
+	rx = blob_named(rate, "rx");
+	if (!rx)
+		return;
+
+	sta->rx_rate_kbit = blob_uint(rx);
+	sta->rx_rate_known = true;
+}
+
+static bool client_update(struct roam_bss *bss, struct blob_attr *client, const char *mac,
 			  uint32_t round)
 {
 	enum {
@@ -263,16 +389,16 @@ static void client_update(struct roam_bss *bss, struct blob_attr *client, const 
 	int signal = ROAMD_NO_SIGNAL;
 
 	if (!ea)
-		return;
+		return false;
 
 	blobmsg_parse(policy, __CL_MAX, tb, blobmsg_data(client), blobmsg_data_len(client));
 
 	if (!tb[CL_ASSOC] || !blobmsg_get_u8(tb[CL_ASSOC]))
-		return;
+		return false;
 
 	sta = roam_sta_get((uint8_t *)ea->ether_addr_octet, true);
 	if (!sta)
-		return;
+		return false;
 
 	if (tb[CL_SIGNAL])
 		signal = (int32_t)blobmsg_get_u32(tb[CL_SIGNAL]);
@@ -281,8 +407,11 @@ static void client_update(struct roam_bss *bss, struct blob_attr *client, const 
 	sta->btm = client_ext_capa_btm(client);
 	sta->rrm = client_rrm_beacon(client);
 	sta->band[bss->band].ht = tb[CL_HT] && blobmsg_get_u8(tb[CL_HT]);
+	client_rate(sta, client);
 
 	roam_sta_set_connected(sta, bss, signal);
+
+	return true;
 }
 
 static void clients_cb(struct ubus_request *req, int type, struct blob_attr *msg)
@@ -292,6 +421,7 @@ static void clients_cb(struct ubus_request *req, int type, struct blob_attr *msg
 	struct roam_bss *bss = req->priv;
 	struct blob_attr *list = NULL, *cur;
 	struct roam_sta *sta;
+	unsigned int stations = 0;
 	int rem;
 
 	blobmsg_parse(&policy, 1, &list, blob_data(msg), blob_len(msg));
@@ -300,7 +430,11 @@ static void clients_cb(struct ubus_request *req, int type, struct blob_attr *msg
 
 	round++;
 	blobmsg_for_each_attr(cur, list, rem)
-		client_update(bss, cur, blobmsg_name(cur), round);
+		if (client_update(bss, cur, blobmsg_name(cur), round))
+			stations++;
+
+	bss->stations = (int)stations;
+	bss->stations_known = true;
 
 	/* hostapd does not always report a client that left (reassoc to another
 	 * node, inactivity), so drop whoever this BSS no longer lists */
@@ -674,13 +808,26 @@ static int handle_sta_event(struct roam_bss *bss, const char *method, struct blo
 	roam_sta_event(bss, (uint8_t *)ea->ether_addr_octet, signal);
 
 	sta = roam_sta_get((uint8_t *)ea->ether_addr_octet, false);
-	if (!sta || roam_policy_allow(sta, bss, ev))
+	if (!sta)
 		return 0;
 
-	roam_log(ROAM_L_DEBUG, "roamd: %s %s on %s GHz (%s) rejected",
-		 method, sta->mac, roam_band_name(bss->band), bss->ifname);
+	if (!roam_policy_allow(sta, bss, ev)) {
+		roam_log(ROAM_L_DEBUG, "roamd: %s %s on %s GHz (%s) rejected",
+			 method, sta->mac, roam_band_name(bss->band), bss->ifname);
+		return 17;
+	}
 
-	return 17;
+	/* hostapd sends the probe response when this returns 0, and only waits
+	 * 100 ms, so a longer hold is "do not answer this probe". The client
+	 * retries; the next probe after the delay is answered. Auth and assoc
+	 * are never held. */
+	if (ev == EVENT_PROBE && roam_policy_delay_probe(sta)) {
+		roam_log(ROAM_L_DEBUG, "roamd: holding probe response for %s on %s",
+			 sta->mac, bss->ifname);
+		return 17;
+	}
+
+	return 0;
 }
 
 static int handle_beacon_report(struct blob_attr *msg)

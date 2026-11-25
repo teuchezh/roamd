@@ -411,6 +411,10 @@ void mesh_aps_dump(struct blob_buf *b, const char *name)
 		blobmsg_add_u8(b, "neighbor_report", !!bss->nr);
 		if (nr)
 			blobmsg_add_string(b, "nr", nr);
+		if (bss->chan_util_known)
+			blobmsg_add_u32(b, "utilization", (uint32_t)bss->chan_util);
+		if (bss->stations_known)
+			blobmsg_add_u32(b, "stations", (uint32_t)bss->stations);
 		blobmsg_close_table(b, e);
 	}
 

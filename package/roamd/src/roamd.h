@@ -105,6 +105,26 @@ struct roam_config {
 	uint32_t steer_retries;
 	uint32_t beacon_req_interval;
 	int log_level;
+
+	/* Mbit/s. A client whose receive rate is above this is not steered.
+	 * 0 disables the check. */
+	int bandwidth_threshold;
+	bool use_station_count;
+	int max_station_diff;
+	uint32_t load_balancing_threshold;
+	int chan_util_val;
+	int max_chan_util_val;
+	uint32_t chan_util_avg_period;
+	/* percent of airtime. 0 disables. This chooses a target; it does not kick. */
+	uint32_t load_kick_threshold;
+	uint32_t load_kick_min_clients;
+	uint32_t initial_connect_delay;
+};
+
+/* channel utilization (0..255, -1 unknown) and associated-station count (-1 unknown) */
+struct roam_air {
+	int util;
+	int stations;
 };
 
 struct roam_bss {
@@ -133,6 +153,13 @@ struct roam_bss {
 
 	struct ubus_request query[__BSS_QUERY_MAX];
 	uint8_t query_pending;
+
+	int chan_util;
+	bool chan_util_known;
+	unsigned int chan_util_sum;
+	unsigned int chan_util_samples;
+	int stations;
+	bool stations_known;
 };
 
 /* a client's own measurement of a BSS from a beacon report */
@@ -159,7 +186,10 @@ struct roam_sta {
 	struct roam_sta_band band[BAND_MAX];
 	struct roam_bss *bss;
 
+	uint64_t created;
 	uint64_t connected_since;
+	uint32_t rx_rate_kbit;
+	bool rx_rate_known;
 	uint64_t security_since;
 	uint64_t security_wait;
 	bool security_pending;
@@ -238,6 +268,8 @@ void roam_bss_init(void);
 void roam_bss_free_all(void);
 struct roam_bss *roam_bss_by_bssid(const uint8_t *bssid);
 struct roam_bss *roam_bss_target(const struct roam_bss *from);
+struct roam_bss *roam_bss_steer_target(const struct roam_bss *from);
+void roam_bss_air(const struct roam_bss *bss, struct roam_air *out);
 bool roam_bss_matches(const struct roam_bss *bss);
 void roam_bss_recheck(void);
 void roam_neighbors_resync(void);
@@ -260,6 +292,12 @@ bool roam_policy_allow(struct roam_sta *sta, struct roam_bss *bss, enum roam_eve
 void roam_policy_kick(struct roam_sta *sta, struct roam_bss *from);
 void roam_policy_run(struct roam_bss *bss);
 bool roam_policy_can_steer(const struct roam_sta *sta);
+bool roam_policy_rate_busy(uint32_t rx_kbit, bool known);
+bool roam_policy_delay_probe(const struct roam_sta *sta);
+bool roam_air_busy(const struct roam_air *air);
+int roam_air_rank(const struct roam_air *air);
+bool roam_air_fewer_stations(const struct roam_air *cur, const struct roam_air *neu);
+bool roam_air_lighter(const struct roam_air *cur, const struct roam_air *neu);
 
 void roam_ubus_object_init(void);
 void roam_ubus_call_local(const char *method, struct blob_attr *msg);

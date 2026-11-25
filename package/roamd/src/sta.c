@@ -52,6 +52,7 @@ struct roam_sta *roam_sta_get(const uint8_t *addr, bool create)
 	roam_mac_str(addr, sta->mac, sizeof(sta->mac));
 
 	sta->avl.key = sta->addr;
+	sta->created = roam_now ? roam_now : 1;
 
 	if (avl_insert(&roam_sta_tree, &sta->avl)) {
 		free(sta);
