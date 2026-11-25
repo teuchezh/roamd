@@ -622,6 +622,7 @@ return view.extend({
 
 		o = s.taboption('general', form.ListValue, 'prefer_band', _('Preferred band'));
 		o.value('5', _('5 GHz'));
+		o.value('6', _('6 GHz'));
 		o.value('2', _('2.4 GHz'));
 		o.value('none', _('No preference'));
 		o.default = '5';
@@ -733,7 +734,7 @@ return view.extend({
 		o.default = '20000';
 
 		o = sub.option(form.Value, 'bandwidth_threshold', _('Receive rate limit'),
-			_('Do not steer a client while the receive rate on its current access point stays above this many Mbit/s. 0 turns the check off.'));
+			_('Do not steer a client while it is receiving faster than this many Mbit/s. The figure is traffic measured from byte counters, not the PHY rate. 0 turns the check off.'));
 		o.datatype = 'uinteger';
 		o.default = '6';
 
@@ -742,7 +743,7 @@ return view.extend({
 		o.default = '0';
 
 		o = sub.option(form.Value, 'max_station_diff', _('Client-count difference'),
-			_('The other access point wins that tie only when it has more than this many fewer clients. The client itself is not counted on its current access point.'));
+			_('The other access point wins that tie only when it has more than this many fewer clients. Two candidate access points are compared by their full counts. The client is subtracted only from the access point it is associated with.'));
 		o.datatype = 'range(1,100)';
 		o.default = '1';
 		o.depends('use_station_count', '1');
@@ -763,7 +764,7 @@ return view.extend({
 		o.default = '170';
 
 		o = sub.option(form.Value, 'chan_util_avg_period', _('Utilization average'),
-			_('How many hostapd samples to average before the channel-utilization figure is updated.'));
+			_('How many hostapd samples to average before the channel-utilization figure is updated. The figure stays unknown until that many samples exist.'));
 		o.datatype = 'range(1,60)';
 		o.default = '3';
 
@@ -778,7 +779,7 @@ return view.extend({
 		o.default = '10';
 
 		o = sub.option(form.Value, 'initial_connect_delay', _('Probe response delay'),
-			_('Milliseconds to wait before answering probes from a client that has just been heard, so neighbouring access points hear it too. Authentication and association are not delayed. 0 answers at once.'));
+			_('Milliseconds to wait before answering probes from a client that has just been heard, so neighbouring access points hear it too. A later attempt starts the wait again. Authentication and association are not delayed. 0 answers at once.'));
 		o.datatype = 'uinteger';
 		o.default = '0';
 

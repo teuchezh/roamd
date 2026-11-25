@@ -994,9 +994,9 @@ static bool place_better(int sig, const struct roam_air *air,
 		return true;
 	if (roam_air_lighter(air_new, air) && !roam_air_lighter(air, air_new))
 		return false;
-	if (roam_air_fewer_stations(air, air_new))
+	if (roam_air_fewer_stations(air, air_new, false))
 		return true;
-	if (roam_air_fewer_stations(air_new, air))
+	if (roam_air_fewer_stations(air_new, air, false))
 		return false;
 
 	return gain > 0;
@@ -1044,6 +1044,116 @@ static const struct poll_node *best_measured(const struct poll_sta *c, const str
 	}
 
 	return have_home ? best : NULL;
+}
+
+/* The node stops accepting mesh_steer after steer_retries. Remember that here
+ * too, or every poll logs "moving" and sends another call while the client
+ * stays put. A new association clears the count. */
+#define STEER_TRACK_MAX	64
+
+struct steer_track {
+	uint8_t addr[6];
+	char home[MESH_ID_MAX];
+	uint32_t connected;
+	uint32_t tries;
+	uint8_t band;
+	unsigned int gen;
+	bool used;
+	bool quiet;
+};
+
+static struct steer_track steer_tracks[STEER_TRACK_MAX];
+
+static struct steer_track *steer_track_get(const uint8_t *addr, bool create)
+{
+	struct steer_track *free_slot = NULL, *oldest = NULL;
+	unsigned int i;
+
+	for (i = 0; i < STEER_TRACK_MAX; i++) {
+		struct steer_track *t = &steer_tracks[i];
+
+		if (t->used && !memcmp(t->addr, addr, 6))
+			return t;
+
+		if (!t->used && !free_slot)
+			free_slot = t;
+
+		if (t->used && (!oldest || t->gen < oldest->gen))
+			oldest = t;
+	}
+
+	if (!create)
+		return NULL;
+
+	if (!free_slot)
+		free_slot = oldest;
+
+	memset(free_slot, 0, sizeof(*free_slot));
+	memcpy(free_slot->addr, addr, 6);
+	free_slot->used = true;
+
+	return free_slot;
+}
+
+static bool steer_same_stay(const struct steer_track *t, const struct poll_sta *c,
+			    const char *home)
+{
+	if (!t->tries)
+		return false;
+
+	if (t->band != c->band || strcmp(t->home, home))
+		return false;
+
+	/* connected_time went backwards: the client associated again */
+	if (c->connected && t->connected && c->connected < t->connected)
+		return false;
+
+	return true;
+}
+
+static bool steer_give_up(const struct poll_sta *c, const char *home)
+{
+	struct steer_track *t = steer_track_get(c->addr, false);
+
+	if (!t || !steer_same_stay(t, c, home))
+		return false;
+
+	if (t->tries < config.steer_retries)
+		return false;
+
+	if (!t->quiet) {
+		t->quiet = true;
+		roam_log(ROAM_L_DEBUG,
+			 "mesh: %s stayed after %u move(s) on %s, not asking again until it reconnects",
+			 c->mac, t->tries, home);
+	}
+
+	return true;
+}
+
+static bool steer_note_attempt(const struct poll_sta *c, const char *home)
+{
+	struct steer_track *t = steer_track_get(c->addr, true);
+
+	if (!t)
+		return false;
+
+	if (!steer_same_stay(t, c, home)) {
+		t->tries = 0;
+		t->quiet = false;
+	}
+
+	/* one poll can see the same client on more than one node */
+	if (t->gen == poll_gen && t->tries)
+		return false;
+
+	t->band = c->band;
+	t->connected = c->connected;
+	snprintf(t->home, sizeof(t->home), "%s", home);
+	t->gen = poll_gen;
+	t->tries++;
+
+	return true;
 }
 
 static void steer_client(unsigned int from, unsigned int to, unsigned int client)
@@ -1126,6 +1236,9 @@ decide:
 		return;
 	}
 
+	if (steer_give_up(c, nodes[home].id))
+		return;
+
 	list[0] = 0;
 	if (!neighbor_list(best, c->addr, ssid, band, list, sizeof(list)))
 		neighbor_list(best, c->addr, ssid, 0, list, sizeof(list));
@@ -1135,6 +1248,9 @@ decide:
 			 mac, best->id, list);
 	else
 		snprintf(args, sizeof(args), "{\"mac\":\"%s\",\"id\":\"%s\"}", mac, best->id);
+
+	if (!steer_note_attempt(c, nodes[home].id))
+		return;
 
 	roam_log(ROAM_L_INFO,
 		 "mesh: %s is better on %s (%s GHz, %d dBm) than on %s (%d dBm), %s, moving",

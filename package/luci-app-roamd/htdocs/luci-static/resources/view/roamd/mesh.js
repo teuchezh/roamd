@@ -2169,9 +2169,9 @@ function renderSettings(state) {
 			bandsField
 		]),
 		number('backhaul_delta', _('5 GHz allowance'),
-			_('dB. How much weaker than 2.4 GHz the 5 GHz signal may be and still be chosen.'), 0, 40),
+			_('dB. How much weaker than 2.4 GHz a 5 or 6 GHz signal may be and still be chosen.'), 0, 40),
 		number('backhaul_min_signal', _('Minimum link signal'),
-			_('dBm. Below this level 5 GHz is not chosen.'), -95, -40),
+			_('dBm. Below this level a 5 or 6 GHz parent is not chosen while 2.4 GHz is usable.'), -95, -40),
 		text('backhaul_ssid', _('Backhaul network name')),
 		text('backhaul_key', _('Backhaul key'), null, true),
 

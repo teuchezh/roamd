@@ -16,6 +16,8 @@ static const char *prefer_name(void)
 		return "2.4";
 	case PREFER_HIGH:
 		return "5";
+	case PREFER_6:
+		return "6";
 	default:
 		return "none";
 	}

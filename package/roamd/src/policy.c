@@ -19,7 +19,14 @@ static struct blob_buf b;
 
 static enum roam_band preferred_band(void)
 {
-	return config.prefer == PREFER_LOW ? BAND_LOW : BAND_HIGH;
+	switch (config.prefer) {
+	case PREFER_LOW:
+		return BAND_LOW;
+	case PREFER_6:
+		return BAND_6;
+	default:
+		return BAND_HIGH;
+	}
 }
 
 static const char *bss_nr_string(const struct roam_bss *bss)
@@ -70,6 +77,11 @@ bool roam_policy_allow(struct roam_sta *sta, struct roam_bss *bss, enum roam_eve
 	if (bss->band == want)
 		return true;
 
+	/* 6 GHz is not the inflated 2.4 GHz band. Do not hide it to push a
+	 * client onto 5 GHz. */
+	if (bss->band == BAND_6 && want != BAND_6)
+		return true;
+
 	pref = &sta->band[want];
 	cur = &sta->band[bss->band];
 
@@ -85,8 +97,15 @@ bool roam_policy_allow(struct roam_sta *sta, struct roam_bss *bss, enum roam_eve
 	if (pref->signal < config.rssi_good)
 		goto allow;
 
-	if (cur->signal != ROAMD_NO_SIGNAL && cur->signal - pref->signal >= config.rssi_diff)
+	/* Onto 6 GHz only when it is actually stronger. The 30 dB margin would
+	 * hide 5 GHz whenever 6 GHz is merely good. */
+	if (want == BAND_6) {
+		if (cur->signal == ROAMD_NO_SIGNAL || pref->signal <= cur->signal)
+			goto allow;
+	} else if (cur->signal != ROAMD_NO_SIGNAL &&
+		   cur->signal - pref->signal >= config.rssi_diff) {
 		goto allow;
+	}
 
 	if (!cur->deny_start)
 		cur->deny_start = roam_now;
@@ -271,8 +290,8 @@ bool roam_policy_can_steer(const struct roam_sta *sta)
 	return !sta->last_steer || roam_now - sta->last_steer >= STEER_RETRY_INTERVAL;
 }
 
-/* hostapd reports the last receive bitrate in kbit/s. Dawn treats a rate above
- * bandwidth_threshold (Mbit/s) as an active transfer and leaves the client. */
+/* rx_kbit is the measured receive throughput, from the increase of hostapd
+ * bytes.rx. A client above bandwidth_threshold (Mbit/s) is left alone. */
 bool roam_policy_rate_busy(uint32_t rx_kbit, bool known)
 {
 	uint32_t limit;
@@ -289,13 +308,14 @@ bool roam_policy_rate_busy(uint32_t rx_kbit, bool known)
 }
 
 /* Hold the probe response until neighbouring APs have also heard the client.
- * Auth and assoc are not held: this is not a rejection. */
+ * Auth and assoc are not held: this is not a rejection. The window starts at
+ * roam_sta_arm_probe(), which re-arms a later attempt. */
 bool roam_policy_delay_probe(const struct roam_sta *sta)
 {
-	if (!config.initial_connect_delay || !sta || sta->bss || !sta->created)
+	if (!config.initial_connect_delay || !sta || sta->bss || !sta->probe_from)
 		return false;
 
-	return roam_now - sta->created < config.initial_connect_delay;
+	return roam_now - sta->probe_from < config.initial_connect_delay;
 }
 
 bool roam_air_busy(const struct roam_air *air)
@@ -330,9 +350,11 @@ int roam_air_rank(const struct roam_air *air)
 	return 0;
 }
 
-/* Dawn: the other AP wins a tie when it has more than max_station_diff fewer
- * clients. The client itself is not counted on the AP it is already on. */
-bool roam_air_fewer_stations(const struct roam_air *cur, const struct roam_air *neu)
+/* The other AP wins a tie when it has more than max_station_diff fewer clients.
+ * Subtract the client only from the AP it is associated with. Two candidate
+ * APs are compared with on_cur false, so both counts stay whole. */
+bool roam_air_fewer_stations(const struct roam_air *cur, const struct roam_air *neu,
+			     bool on_cur)
 {
 	int own, other;
 
@@ -342,7 +364,9 @@ bool roam_air_fewer_stations(const struct roam_air *cur, const struct roam_air *
 	if (cur->stations < 0 || neu->stations < 0)
 		return false;
 
-	own = cur->stations > 0 ? cur->stations - 1 : 0;
+	own = cur->stations;
+	if (on_cur && own > 0)
+		own--;
 	other = neu->stations;
 
 	return own - other > config.max_station_diff;
@@ -375,8 +399,33 @@ static bool sta_should_leave(struct roam_sta *sta, struct roam_bss *bss,
 
 	there = sta->band[target->band].signal;
 
+	/* 802.11b/g has no 6 GHz. Do not ask it to move there, even when 6 GHz
+	 * looks much stronger. */
+	if (target->band == BAND_6 && bss->band == BAND_LOW && !sta->band[bss->band].ht)
+		return false;
+
 	if (here != ROAMD_NO_SIGNAL && there - here >= config.rssi_diff)
 		return true;
+
+	/* Steer onto 6 GHz only when it is stronger than where the client is.
+	 * The 2.4→5 rule would move a client there while 6 GHz is the weaker band. */
+	if (target->band == BAND_6 && bss->band != BAND_6) {
+		if (there < config.rssi_low)
+			return false;
+
+		if (here == ROAMD_NO_SIGNAL)
+			return there >= config.rssi_good;
+
+		return there > here;
+	}
+
+	/* Do not steer a client off 6 GHz just because 5 GHz is good. */
+	if (bss->band == BAND_6 && want != BAND_6) {
+		if (here == ROAMD_NO_SIGNAL || here >= config.rssi_low)
+			return false;
+
+		return there > here;
+	}
 
 	if (bss->band == want) {
 		if (here == ROAMD_NO_SIGNAL || here >= config.rssi_low)

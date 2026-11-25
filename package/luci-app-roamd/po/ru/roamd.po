@@ -208,8 +208,8 @@ msgstr "Миллисекунды между измерениями другог�
 msgid "Receive rate limit"
 msgstr "Порог скорости приёма"
 
-msgid "Do not steer a client while the receive rate on its current access point stays above this many Mbit/s. 0 turns the check off."
-msgstr "Не переводить клиента, пока скорость приёма на текущей точке выше этого числа Мбит/с. 0 — проверка выключена."
+msgid "Do not steer a client while it is receiving faster than this many Mbit/s. The figure is traffic measured from byte counters, not the PHY rate. 0 turns the check off."
+msgstr "Не переводить клиента, пока он принимает быстрее этого числа Мбит/с. Цифра — трафик по счётчикам байт, а не скорость PHY. 0 — проверка выключена."
 
 msgid "Prefer the less crowded access point"
 msgstr "Предпочитать менее загруженную точку"
@@ -220,8 +220,8 @@ msgstr "Если сигнал одинаковый, выбирать точку,
 msgid "Client-count difference"
 msgstr "Разница в числе клиентов"
 
-msgid "The other access point wins that tie only when it has more than this many fewer clients. The client itself is not counted on its current access point."
-msgstr "Другая точка побеждает при равенстве, только если клиентов на ней меньше и разница больше этого числа. Сам клиент на текущей точке не считается."
+msgid "The other access point wins that tie only when it has more than this many fewer clients. Two candidate access points are compared by their full counts. The client is subtracted only from the access point it is associated with."
+msgstr "Другая точка побеждает при равенстве, только если клиентов на ней меньше и разница больше этого числа. Две точки-кандидата сравниваются полными числами. Клиент вычитается только из счётчика точки, где он подключён."
 
 msgid "Load-balance difference"
 msgstr "Порог балансировки"
@@ -244,8 +244,8 @@ msgstr "Загрузка канала выше этого значения (0–
 msgid "Utilization average"
 msgstr "Усреднение загрузки"
 
-msgid "How many hostapd samples to average before the channel-utilization figure is updated."
-msgstr "Сколько отсчётов hostapd усреднять, прежде чем обновить цифру загрузки канала."
+msgid "How many hostapd samples to average before the channel-utilization figure is updated. The figure stays unknown until that many samples exist."
+msgstr "Сколько отсчётов hostapd усреднять, прежде чем обновить цифру загрузки канала. Пока их меньше, цифра неизвестна."
 
 msgid "Channel load limit"
 msgstr "Предел загрузки канала"
@@ -262,8 +262,8 @@ msgstr "Процент загрузки канала не учитывают, п
 msgid "Probe response delay"
 msgstr "Задержка ответа на поиск"
 
-msgid "Milliseconds to wait before answering probes from a client that has just been heard, so neighbouring access points hear it too. Authentication and association are not delayed. 0 answers at once."
-msgstr "Сколько миллисекунд не отвечать на probe только что услышанного клиента, чтобы его услышали и соседние точки. Аутентификацию и ассоциацию это не задерживает. 0 — отвечать сразу."
+msgid "Milliseconds to wait before answering probes from a client that has just been heard, so neighbouring access points hear it too. A later attempt starts the wait again. Authentication and association are not delayed. 0 answers at once."
+msgstr "Сколько миллисекунд не отвечать на probe только что услышанного клиента, чтобы его услышали и соседние точки. Повторный заход запускает ожидание заново. Аутентификацию и ассоциацию это не задерживает. 0 — отвечать сразу."
 
 msgid "Log level"
 msgstr "Уровень журнала"
@@ -497,11 +497,11 @@ msgstr "Автоматическое обновление"
 msgid "Backhaul key"
 msgstr "Ключ транспортной сети"
 
-msgid "dB. How much weaker than 2.4 GHz the 5 GHz signal may be and still be chosen."
-msgstr "дБ. Насколько 5 ГГц может уступать 2,4 ГГц и всё равно быть выбранным."
+msgid "dB. How much weaker than 2.4 GHz a 5 or 6 GHz signal may be and still be chosen."
+msgstr "дБ. Насколько 5 или 6 ГГц может уступать 2,4 ГГц и всё равно быть выбранным."
 
-msgid "dBm. Below this level 5 GHz is not chosen."
-msgstr "дБм. Слабее этого уровня 5 ГГц не выбирается."
+msgid "dBm. Below this level a 5 or 6 GHz parent is not chosen while 2.4 GHz is usable."
+msgstr "дБм. Слабее этого уровня 5 или 6 ГГц не выбирается, пока 2,4 ГГц пригоден."
 
 msgid "Backhaul network name"
 msgstr "Имя транспортной сети"

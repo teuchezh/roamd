@@ -165,11 +165,27 @@ uint16_t roam_hash16(const char *s)
 
 static enum roam_prefer opt_to_prefer(const char *v)
 {
+	if (!strcmp(v, "6"))
+		return PREFER_6;
 	if (!strcmp(v, "5") || !strcmp(v, "high"))
 		return PREFER_HIGH;
 	if (!strcmp(v, "2") || !strcmp(v, "2.4") || !strcmp(v, "low"))
 		return PREFER_LOW;
 	return PREFER_NONE;
+}
+
+static const char *prefer_str(enum roam_prefer prefer)
+{
+	switch (prefer) {
+	case PREFER_6:
+		return "6";
+	case PREFER_HIGH:
+		return "5";
+	case PREFER_LOW:
+		return "2.4";
+	default:
+		return "none";
+	}
 }
 
 static void opt_apply(const struct opt_desc *o, const char *value)
@@ -340,9 +356,7 @@ static void opt_value(const struct opt_desc *o, char *value, size_t len)
 		snprintf(value, len, "%s", (const char *)field);
 		break;
 	case OPT_PREFER:
-		snprintf(value, len, "%s",
-			 *(const enum roam_prefer *)field == PREFER_HIGH ? "5" :
-			 *(const enum roam_prefer *)field == PREFER_LOW ? "2.4" : "none");
+		snprintf(value, len, "%s", prefer_str(*(const enum roam_prefer *)field));
 		break;
 	}
 }
