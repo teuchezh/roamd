@@ -90,11 +90,13 @@ static uint64_t bh_scan_at;
 static uint64_t weak_since;
 static uint64_t link_sample_at;
 static uint64_t rescan_at;
+static uint64_t upgrade_at;
 static uint64_t cable_since;
 static uint64_t cable_dropped_at;
 static uint64_t cable_penalty_until;
 static bool bh_scan_empty;
 static bool bh_scan_rescan;
+static bool bh_scan_upgrade;
 static bool bh_scan_move;
 static bool bh_want_search;
 static bool bh_weak_attach;
@@ -278,10 +280,10 @@ static bool node_wired_uplink(void);
 
 static const char *bh_radio(struct uci_context *ctx, struct uci_package *pkg, int band)
 {
-	static const char *const want[] = { "2g", "5g" };
+	static const char *const want[] = { "2g", "5g", "6g" };
 	struct uci_element *e;
 
-	if (band < 0 || band > 1)
+	if (band < 0 || band >= (int)ARRAY_SIZE(want))
 		return NULL;
 
 	uci_foreach_element(&pkg->sections, e) {
@@ -337,7 +339,7 @@ static bool bh_sta_apply(int band, const char *bssid, bool enabled)
 	roam_network_reload();
 
 	roam_log(ROAM_L_INFO, "mesh: backhaul station %s on %s GHz",
-		 enabled ? "up" : "down", band ? "5" : "2.4");
+		 enabled ? "up" : "down", roam_band_name((enum roam_band)band));
 
 	return true;
 }
@@ -400,7 +402,17 @@ static const char *bh_owner(const struct bh_parent *p)
 	return p->chain[0] ? p->chain : MESH_CONTROLLER_OWNER;
 }
 
-static bool bh_radio_present[2];
+static bool bh_radio_present[BAND_MAX];
+
+static enum roam_band bh_parse_band(const char *band)
+{
+	if (band && !strcmp(band, "6"))
+		return BAND_6;
+	if (band && !strcmp(band, "5"))
+		return BAND_HIGH;
+
+	return BAND_LOW;
+}
 
 static void bh_parents_fill(void)
 {
@@ -424,8 +436,9 @@ static void bh_parents_fill(void)
 		*chain++ = '\0';
 		*band++ = '\0';
 
-		p->band = !strcmp(band, "5");
-		if (!bh_radio_present[p->band] || mesh_chain_has(chain, mesh.member_id))
+		p->band = bh_parse_band(band);
+		if (p->band < 0 || p->band >= BAND_MAX ||
+		    !bh_radio_present[p->band] || mesh_chain_has(chain, mesh.member_id))
 			continue;
 
 		snprintf(p->bssid, sizeof(p->bssid), "%s", tok);
@@ -445,12 +458,14 @@ static void bh_parents_load(void)
 {
 	struct uci_session u;
 
-	bh_radio_present[0] = false;
-	bh_radio_present[1] = false;
+	memset(bh_radio_present, 0, sizeof(bh_radio_present));
 
 	if (uci_session_open(&u, "wireless")) {
-		bh_radio_present[0] = bh_radio(u.ctx, u.pkg, 0) != NULL;
-		bh_radio_present[1] = bh_radio(u.ctx, u.pkg, 1) != NULL;
+		int band;
+
+		for (band = 0; band < BAND_MAX; band++)
+			bh_radio_present[band] = bh_radio(u.ctx, u.pkg, band) != NULL;
+
 		uci_session_close(&u);
 	}
 
@@ -711,6 +726,8 @@ static bool bh_scan_start(bool rescan)
 
 	bh_scan_heard = false;
 	bh_scan_rescan = rescan;
+	if (!rescan)
+		bh_scan_upgrade = false;
 	bh_scan_busy = true;
 
 	scan_pass(scan_first_done);
@@ -731,16 +748,45 @@ static enum bh_class bh_class(const struct bh_parent *p)
 	return bh_class_of(p->signal, p->samples > 1);
 }
 
-static int bh_band_pick(int i24, int i5)
+/* A faster band of the same parent wins when it is usable and not much weaker
+ * than the slower one. slow < 0 means there is no slower candidate. */
+static bool bh_faster_ok(int fast, int slow)
 {
-	if (i5 < 0)
-		return i24;
+	const struct bh_parent *f;
 
-	if (i24 < 0 || (bh_parents[i5].signal >= mesh.backhaul_min_signal &&
-			bh_parents[i5].signal >= bh_parents[i24].signal - mesh.backhaul_delta))
+	if (fast < 0)
+		return false;
+
+	f = &bh_parents[fast];
+	if (f->signal < mesh.backhaul_min_signal)
+		return false;
+
+	if (slow < 0)
+		return true;
+
+	return f->signal >= bh_parents[slow].signal - mesh.backhaul_delta;
+}
+
+static int bh_band_pick(int i24, int i5, int i6)
+{
+	int slow = i24;
+
+	if (i5 >= 0 && (slow < 0 || bh_parents[i5].signal > bh_parents[slow].signal))
+		slow = i5;
+
+	if (bh_faster_ok(i6, slow))
+		return i6;
+
+	if (bh_faster_ok(i5, i24))
 		return i5;
 
-	return i24;
+	if (i24 >= 0)
+		return i24;
+
+	if (i5 >= 0)
+		return i5;
+
+	return i6;
 }
 
 static bool bh_better(int a, int b)
@@ -772,7 +818,8 @@ static int bh_choose(bool allow_penalized)
 
 	for (i = 0; i < bh_parents_n; i++) {
 		bool skip = !allow_penalized && bh_penalized(bh_owner(&bh_parents[i]));
-		int i24 = -1, i5 = -1, pick;
+		int on_band[BAND_MAX] = { -1, -1, -1 };
+		int pick;
 
 		if (done[i])
 			continue;
@@ -785,15 +832,15 @@ static int bh_choose(bool allow_penalized)
 				continue;
 
 			done[j] = true;
-			if (skip || !p->samples)
+			if (skip || !p->samples || p->band < 0 || p->band >= BAND_MAX)
 				continue;
 
-			slot = p->band ? &i5 : &i24;
+			slot = &on_band[p->band];
 			if (*slot < 0 || p->signal > bh_parents[*slot].signal)
 				*slot = j;
 		}
 
-		pick = bh_band_pick(i24, i5);
+		pick = bh_band_pick(on_band[BAND_LOW], on_band[BAND_HIGH], on_band[BAND_6]);
 		if (pick >= 0 && bh_better(pick, best))
 			best = pick;
 	}
@@ -816,7 +863,7 @@ static void bh_attach(int idx, const char *why)
 		return;
 
 	roam_log(ROAM_L_INFO, "mesh: backhaul parent %s %s: %s GHz, %d dBm, %d hop(s) from the controller",
-		 p->bssid, why, p->band ? "5" : "2.4", p->signal, p->depth + 1);
+		 p->bssid, why, roam_band_name((enum roam_band)p->band), p->signal, p->depth + 1);
 
 	snprintf(bh_parent, sizeof(bh_parent), "%s", p->bssid);
 	snprintf(bh_parent_owner, sizeof(bh_parent_owner), "%s", bh_owner(p));
@@ -927,6 +974,7 @@ static void bh_scan_done(void)
 
 	if (bh_scan_move) {
 		bh_scan_move = false;
+		bh_scan_upgrade = false;
 
 		if (best >= 0)
 			bh_attach(best, "replaces a parent that is no longer allowed");
@@ -937,9 +985,16 @@ static void bh_scan_done(void)
 	}
 
 	if (bh_scan_rescan) {
+		bool upgrade = bh_scan_upgrade;
+
+		bh_scan_rescan = false;
+		bh_scan_upgrade = false;
+
 		if (bh_up && best >= 0 && bh_class(&bh_parents[best]) != BH_WEAK &&
-		    strcasecmp(bh_parents[best].bssid, bh_parent))
-			bh_attach(best, "gives a stronger link");
+		    strcasecmp(bh_parents[best].bssid, bh_parent) &&
+		    (!upgrade || bh_parents[best].band != BAND_LOW))
+			bh_attach(best, upgrade ? "moves to a wider band" : "gives a stronger link");
+
 		return;
 	}
 
@@ -972,6 +1027,39 @@ static void bh_weak_rescan(void)
 	rescan_at = roam_now;
 	bh_parents_load();
 	bh_scan_start(true);
+}
+
+/* A node that came up on 2.4 GHz because 5 GHz was missing from the first scan
+ * keeps looking. A usable 5 or 6 GHz parent is taken even while 2.4 is fine. */
+static void bh_low_upgrade(void)
+{
+	roam_time_update();
+
+	if (!bh_up || bh_band != BAND_LOW || contact_lost() || bh_scan_busy)
+		return;
+
+	if (upgrade_at && roam_now - upgrade_at < MESH_RESCAN_GAP)
+		return;
+
+	bh_parents_load();
+
+	/* No 5/6 GHz radio: do not consume the weak-link rescan gap. */
+	if (!bh_radio_present[BAND_HIGH] && !bh_radio_present[BAND_6]) {
+		upgrade_at = roam_now;
+		return;
+	}
+
+	if (rescan_at && roam_now - rescan_at < MESH_RESCAN_GAP) {
+		upgrade_at = rescan_at;
+		return;
+	}
+
+	upgrade_at = roam_now;
+	rescan_at = roam_now;
+	roam_log(ROAM_L_DEBUG, "mesh: backhaul is on 2.4 GHz, looking for a wider band");
+	bh_scan_upgrade = true;
+	if (!bh_scan_start(true))
+		bh_scan_upgrade = false;
 }
 
 static struct uloop_fd probe = { .fd = -1 };
@@ -1277,6 +1365,7 @@ static void node_watch(void)
 	relay = !bh_no_path();
 	link_led_set(!contact_lost());
 	bh_bss_ensure(relay);
+	bh_low_upgrade();
 
 	if (mesh.wifi_shutdown)
 		aps_ensure(relay);
@@ -1309,12 +1398,21 @@ static void bh_state_load(void)
 	if (sta && !roam_uci_bool(uci_lookup_option_string(u.ctx, sta, "disabled"))) {
 		const char *device = uci_lookup_option_string(u.ctx, sta, "device");
 		const char *bssid = uci_lookup_option_string(u.ctx, sta, "bssid");
-		const char *radio = bh_radio(u.ctx, u.pkg, 1);
+		int band;
 
 		snprintf(bh_parent, sizeof(bh_parent), "%s", bssid ? bssid : "");
 		bh_up = true;
 		bh_since = roam_now;
-		bh_band = device && radio && !strcmp(device, radio);
+		bh_band = BAND_LOW;
+
+		for (band = BAND_6; band >= BAND_LOW; band--) {
+			const char *radio = bh_radio(u.ctx, u.pkg, band);
+
+			if (device && radio && !strcmp(device, radio)) {
+				bh_band = band;
+				break;
+			}
+		}
 	}
 
 	uci_session_close(&u);
@@ -1782,6 +1880,7 @@ bool mesh_node_apply(struct blob_attr *msg)
 	if (strcmp(bh_parents_seen, mesh.backhaul_parents)) {
 		snprintf(bh_parents_seen, sizeof(bh_parents_seen), "%s", mesh.backhaul_parents);
 		bh_weak_rescan();
+		bh_low_upgrade();
 	}
 
 	return true;

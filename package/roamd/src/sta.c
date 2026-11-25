@@ -118,6 +118,27 @@ void roam_sta_event(struct roam_bss *bss, const uint8_t *addr, int signal)
 		sta_band_seen(sta, bss->band, signal);
 }
 
+/* A probe of a client that is not associated starts the response delay.
+ * Retries inside that window keep the start time, so the probe that arrives
+ * after the delay is answered. A probe that shows up only once the previous
+ * window has elapsed, and the client has been quiet for that long, is a new
+ * attempt and the delay starts again. */
+void roam_sta_arm_probe(struct roam_sta *sta)
+{
+	uint32_t delay = config.initial_connect_delay;
+
+	if (!sta || sta->bss || !delay)
+		return;
+
+	if (!sta->probe_from ||
+	    (sta->probe_last &&
+	     roam_now - sta->probe_last >= delay &&
+	     roam_now - sta->probe_from >= delay))
+		sta->probe_from = roam_now;
+
+	sta->probe_last = roam_now;
+}
+
 void roam_sta_set_connected(struct roam_sta *sta, struct roam_bss *bss, int signal)
 {
 	if (sta->bss != bss) {
@@ -153,6 +174,11 @@ void roam_sta_set_connected(struct roam_sta *sta, struct roam_bss *bss, int sign
 		sta->connected_since = roam_now;
 		sta->steer_count = 0;
 		sta->beacon_req_silent = 0;
+		sta->rx_bytes_known = false;
+		sta->rx_rate_known = false;
+		sta->rx_rate_kbit = 0;
+		sta->probe_from = 0;
+		sta->probe_last = 0;
 	}
 
 	sta_band_seen(sta, bss->band, signal);
@@ -209,6 +235,8 @@ void roam_sta_reset(struct roam_sta *sta)
 
 	sta->bss = NULL;
 	sta->connected_since = 0;
+	sta->probe_from = 0;
+	sta->probe_last = 0;
 }
 
 void roam_sta_disconnected(struct roam_sta *sta)

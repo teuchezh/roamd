@@ -142,15 +142,39 @@ struct roam_bss *roam_bss_target(const struct roam_bss *from)
 			high = bss;
 	}
 
-	/* 6 GHz is its own band. Prefer the configured 2.4/5 partner, then 6. */
-	if (from->band != BAND_HIGH && config.prefer != PREFER_LOW && high)
+	/* prefer_band=6 aims at 6 GHz. The caller moves a client there only when
+	 * 6 GHz is stronger, so a weaker 6 GHz target is not taken. */
+	if (config.prefer == PREFER_6) {
+		if (from->band != BAND_6 && six)
+			return six;
+		if (high)
+			return high;
+		if (low)
+			return low;
+
+		return other;
+	}
+
+	/* 2.4 and 5 follow the configured preference. 6 GHz is a target when
+	 * that pair is missing; it is not where a 6 GHz client is sent just
+	 * because 5 GHz exists. A client already on 6 GHz may still be offered
+	 * 5 or 2.4, and leaves only when that band is actually better. */
+	if (from->band != BAND_HIGH && from->band != BAND_6 &&
+	    config.prefer != PREFER_LOW && high)
 		return high;
-	if (from->band != BAND_LOW && config.prefer == PREFER_LOW && low)
+	if (from->band != BAND_LOW && from->band != BAND_6 &&
+	    config.prefer == PREFER_LOW && low)
 		return low;
 	if (from->band == BAND_HIGH && low)
 		return low;
 	if (from->band == BAND_LOW && high)
 		return high;
+	if (from->band == BAND_6 && config.prefer == PREFER_LOW && low)
+		return low;
+	if (from->band == BAND_6 && high)
+		return high;
+	if (from->band == BAND_6 && low)
+		return low;
 	if (from->band != BAND_6 && six)
 		return six;
 	if (from->band != BAND_HIGH && high)
@@ -200,11 +224,8 @@ static void bss_util_note(struct roam_bss *bss, unsigned int util)
 	bss->chan_util_sum += util;
 	bss->chan_util_samples++;
 
-	if (!bss->chan_util_known) {
-		bss->chan_util = (int)util;
-		bss->chan_util_known = true;
-	}
-
+	/* The first sample of a window is not the average. Leave the previous
+	 * figure, or unknown, until chan_util_avg_period samples are in. */
 	if (bss->chan_util_samples < period)
 		return;
 
@@ -253,7 +274,7 @@ struct roam_bss *roam_bss_steer_target(const struct roam_bss *from)
 
 		roam_bss_air(bss, &air);
 		rank = roam_air_rank(&air) - roam_air_rank(&best_air);
-		if (rank > 0 || (rank == 0 && roam_air_fewer_stations(&best_air, &air))) {
+		if (rank > 0 || (rank == 0 && roam_air_fewer_stations(&best_air, &air, false))) {
 			best = bss;
 			best_air = air;
 		} else if (rank == 0 && roam_air_lighter(&best_air, &air) &&
@@ -353,20 +374,69 @@ static bool client_rrm_beacon(struct blob_attr *client)
 	return !!(blobmsg_get_u32(blobmsg_data(list)) & 0x70);
 }
 
-static void client_rate(struct roam_sta *sta, struct blob_attr *client)
+static uint64_t blob_u64(struct blob_attr *attr)
 {
-	struct blob_attr *rate, *rx;
+	if (!attr)
+		return 0;
 
-	rate = blob_named(client, "rate");
-	if (!rate || blobmsg_type(rate) != BLOBMSG_TYPE_TABLE)
+	switch (blobmsg_type(attr)) {
+	case BLOBMSG_TYPE_INT8:
+		return blobmsg_get_u8(attr);
+	case BLOBMSG_TYPE_INT16:
+		return blobmsg_get_u16(attr);
+	case BLOBMSG_TYPE_INT32:
+		return blobmsg_get_u32(attr);
+	case BLOBMSG_TYPE_INT64:
+		return blobmsg_get_u64(attr);
+	default:
+		return 0;
+	}
+}
+
+/* Throughput in kbit/s from the increase of hostapd bytes.rx. rate.rx is the
+ * PHY bitrate and stays high while the client is idle, so it is not used. */
+static void client_traffic(struct roam_sta *sta, struct blob_attr *client)
+{
+	struct blob_attr *bytes, *rx;
+	uint64_t now_bytes, delta, dt, kbit;
+
+	bytes = blob_named(client, "bytes");
+	if (!bytes || blobmsg_type(bytes) != BLOBMSG_TYPE_TABLE)
 		return;
 
-	rx = blob_named(rate, "rx");
+	rx = blob_named(bytes, "rx");
 	if (!rx)
 		return;
 
-	sta->rx_rate_kbit = blob_uint(rx);
+	now_bytes = blob_u64(rx);
+
+	if (!sta->rx_bytes_known || now_bytes < sta->rx_bytes || !sta->rx_bytes_at) {
+		sta->rx_bytes = now_bytes;
+		sta->rx_bytes_at = roam_now ? roam_now : 1;
+		sta->rx_bytes_known = true;
+		sta->rx_rate_known = false;
+		return;
+	}
+
+	dt = roam_now - sta->rx_bytes_at;
+	/* A very short gap turns a few packets into a huge rate. Keep the
+	 * baseline so the next poll covers the whole interval. */
+	if (dt < 500)
+		return;
+
+	delta = now_bytes - sta->rx_bytes;
+	if (delta > UINT64_MAX / 8)
+		kbit = UINT32_MAX;
+	else
+		kbit = delta * 8 / dt;
+
+	if (kbit > UINT32_MAX)
+		kbit = UINT32_MAX;
+
+	sta->rx_rate_kbit = (uint32_t)kbit;
 	sta->rx_rate_known = true;
+	sta->rx_bytes = now_bytes;
+	sta->rx_bytes_at = roam_now;
 }
 
 static bool client_update(struct roam_bss *bss, struct blob_attr *client, const char *mac,
@@ -407,7 +477,7 @@ static bool client_update(struct roam_bss *bss, struct blob_attr *client, const 
 	sta->btm = client_ext_capa_btm(client);
 	sta->rrm = client_rrm_beacon(client);
 	sta->band[bss->band].ht = tb[CL_HT] && blobmsg_get_u8(tb[CL_HT]);
-	client_rate(sta, client);
+	client_traffic(sta, client);
 
 	roam_sta_set_connected(sta, bss, signal);
 
@@ -810,6 +880,9 @@ static int handle_sta_event(struct roam_bss *bss, const char *method, struct blo
 	sta = roam_sta_get((uint8_t *)ea->ether_addr_octet, false);
 	if (!sta)
 		return 0;
+
+	if (ev == EVENT_PROBE)
+		roam_sta_arm_probe(sta);
 
 	if (!roam_policy_allow(sta, bss, ev)) {
 		roam_log(ROAM_L_DEBUG, "roamd: %s %s on %s GHz (%s) rejected",

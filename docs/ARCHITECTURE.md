@@ -151,11 +151,12 @@ Init-скрипт запускает демон под procd с `respawn` и р�
 второй диапазон. Правило диапазона, который недоступен ни на одном устройстве системы, не
 применяется нигде.
 
-Перед переводом `roam_policy_rate_busy()` смотрит скорость приёма из `get_clients` и не трогает
-клиента, пока она выше `bandwidth_threshold`. `roam_bss_steer_target()` и межузловой выбор цели
+Перед переводом `roam_policy_rate_busy()` смотрит прирост `bytes.rx` из `get_clients` и не трогает
+клиента, пока приём быстрее `bandwidth_threshold`. `roam_bss_steer_target()` и межузловой выбор цели
 учитывают `airtime.utilization` и число станций той же точки hostapd; отдельного протокола для
-этого нет, в отчёт узла добавлены поля `utilization`, `stations` и `rx_rate`. Probe нового
-клиента можно подержать `initial_connect_delay` мс (ответ кодом 17, без отказа в auth/assoc).
+этого нет, в отчёт узла добавлены поля `utilization`, `stations` и `rx_rate` (прирост байт,
+не PHY). Probe нового клиента можно подержать `initial_connect_delay` мс (ответ кодом 17, без
+отказа в auth/assoc); повторный заход запускает паузу заново.
 Ни отказ в probe/auth/assoc по загрузке, ни `disassociation_imminent`, ни принудительный kick по
 загрузке не добавляются.
 

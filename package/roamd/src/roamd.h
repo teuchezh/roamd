@@ -49,7 +49,8 @@ enum roam_band {
 enum roam_prefer {
 	PREFER_NONE,
 	PREFER_LOW,
-	PREFER_HIGH
+	PREFER_HIGH,
+	PREFER_6
 };
 
 enum roam_lock {
@@ -106,8 +107,9 @@ struct roam_config {
 	uint32_t beacon_req_interval;
 	int log_level;
 
-	/* Mbit/s. A client whose receive rate is above this is not steered.
-	 * 0 disables the check. */
+	/* Mbit/s. A client whose measured receive throughput is above this is not
+	 * steered. The figure is the increase of hostapd bytes.rx, not the PHY
+	 * bitrate. 0 disables the check. */
 	int bandwidth_threshold;
 	bool use_station_count;
 	int max_station_diff;
@@ -188,8 +190,13 @@ struct roam_sta {
 
 	uint64_t created;
 	uint64_t connected_since;
+	uint64_t probe_from;
+	uint64_t probe_last;
 	uint32_t rx_rate_kbit;
 	bool rx_rate_known;
+	uint64_t rx_bytes;
+	uint64_t rx_bytes_at;
+	bool rx_bytes_known;
 	uint64_t security_since;
 	uint64_t security_wait;
 	bool security_pending;
@@ -281,6 +288,7 @@ struct roam_sta *roam_sta_get(const uint8_t *addr, bool create);
 void roam_sta_expire(void);
 void roam_sta_drop_bss(struct roam_bss *bss);
 void roam_sta_event(struct roam_bss *bss, const uint8_t *addr, int signal);
+void roam_sta_arm_probe(struct roam_sta *sta);
 void roam_sta_set_connected(struct roam_sta *sta, struct roam_bss *bss, int signal);
 void roam_sta_disconnected(struct roam_sta *sta);
 void roam_sta_reset(struct roam_sta *sta);
@@ -296,7 +304,8 @@ bool roam_policy_rate_busy(uint32_t rx_kbit, bool known);
 bool roam_policy_delay_probe(const struct roam_sta *sta);
 bool roam_air_busy(const struct roam_air *air);
 int roam_air_rank(const struct roam_air *air);
-bool roam_air_fewer_stations(const struct roam_air *cur, const struct roam_air *neu);
+bool roam_air_fewer_stations(const struct roam_air *cur, const struct roam_air *neu,
+			     bool on_cur);
 bool roam_air_lighter(const struct roam_air *cur, const struct roam_air *neu);
 
 void roam_ubus_object_init(void);
