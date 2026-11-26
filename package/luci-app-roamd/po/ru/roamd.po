@@ -1447,7 +1447,7 @@ msgid "The transition log could not be read."
 msgstr "Не удалось прочитать журнал переходов."
 
 msgid "Cards"
-msgstr "Карточки"
+msgstr "Панель"
 
 msgid "Map"
 msgstr "Карта"

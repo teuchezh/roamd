@@ -699,140 +699,199 @@ function renderNodes(state) {
 	]);
 }
 
-/* Tree of parent links (member.via). Positions are not coordinates. */
-var MAP_NODE_W = 176;
-var MAP_NODE_H = 76;
-var MAP_GAP_X = 48;
-var MAP_GAP_Y = 64;
-var MAP_PAD = 28;
-var MAP_CHIP_H = 24;
-var MAP_CHIP_GAP = 6;
-var MAP_CHIP_W = 156;
+/* Radial graph of parent links. The controller is the center; positions are not coordinates. */
+var MAP_RING = 188;
+var MAP_CLIENT_GAP = 156;
+var MAP_PAD = 48;
 
-function mapChipCols(count) {
-	return count > 1 ? 2 : 1;
-}
+function mapClientRssi(c) {
+	var sample, dbm;
 
-function mapBlock(count, showClients) {
-	var cols = showClients && count ? mapChipCols(count) : 1;
-	var rows = showClients && count ? Math.ceil(count / cols) : 0;
-	var inner = rows ? (cols * MAP_CHIP_W + (cols - 1) * MAP_CHIP_GAP) : 0;
+	if (!c || c.wired)
+		return null;
 
-	return {
-		w: Math.max(MAP_NODE_W, inner + 16),
-		h: MAP_NODE_H + (rows ? (12 + rows * MAP_CHIP_H + (rows - 1) * MAP_CHIP_GAP) : 0),
-		cols: cols,
-		rows: rows
-	};
-}
-
-function layoutMesh(blocks, childIds, rootId, orphanIds) {
-	var seen = {};
-
-	function measure(id) {
-		if (!blocks[id])
-			return 0;
-
-		if (seen[id])
-			return blocks[id].span || blocks[id].w;
-
-		seen[id] = true;
-
-		var kids = childIds[id] || [];
-		var sum = 0;
-		var i;
-
-		for (i = 0; i < kids.length; i++) {
-			sum += measure(kids[i]);
-
-			if (i)
-				sum += MAP_GAP_X;
-		}
-
-		blocks[id].span = Math.max(blocks[id].w, sum || 0);
-		return blocks[id].span;
+	try {
+		sample = servingSample(c);
+	} catch (e) {
+		return null;
 	}
 
-	if (!blocks[rootId])
-		return { pos: {}, width: 280, height: 120, orphanLabelY: 0 };
+	if (!sample || sample.value == null || sample.value === '')
+		return null;
 
-	measure(rootId);
+	dbm = common.signed(sample.value);
+	return dbm ? dbm : null;
+}
 
+function mapUplinkRssi(m) {
+	var dbm;
+
+	if (!m || m.connection !== 'wifi' || m.uplink_signal == null || m.uplink_signal === '')
+		return null;
+
+	dbm = common.signed(m.uplink_signal);
+	return dbm ? dbm : null;
+}
+
+function mapEdgeMetric(kind, dbm) {
+	if (kind === 'wifi' && dbm)
+		return '%d %s'.format(dbm, _('dBm'));
+
+	return '\u2014';
+}
+
+function starPoints(cx, cy, outer, inner, n) {
+	var pts = [];
+	var i, a, r;
+
+	for (i = 0; i < n * 2; i++) {
+		a = -Math.PI / 2 + i * Math.PI / n;
+		r = (i % 2) ? inner : outer;
+		pts.push(ri(cx + Math.cos(a) * r) + ',' + ri(cy + Math.sin(a) * r));
+	}
+
+	return pts.join(' ');
+}
+
+function layoutRadial(graph, clientLists) {
+	var children = (graph && graph.children) || {};
 	var pos = {};
 	var placed = {};
 
-	function place(id, left, top) {
-		if (placed[id] || !blocks[id])
+	function walk(id, angle, spread, depth) {
+		var kids, n, use, step, start, i;
+
+		if (placed[id])
 			return;
 
 		placed[id] = true;
-
-		var b = blocks[id];
-		var kids = childIds[id] || [];
-		var sum = 0;
-		var i;
-
-		for (i = 0; i < kids.length; i++) {
-			sum += blocks[kids[i]].span || blocks[kids[i]].w;
-
-			if (i)
-				sum += MAP_GAP_X;
-		}
-
 		pos[id] = {
-			x: left + (b.span - b.w) / 2,
-			y: top,
-			w: b.w,
-			h: b.h
+			x: Math.cos(angle) * depth * MAP_RING,
+			y: Math.sin(angle) * depth * MAP_RING,
+			angle: angle,
+			depth: depth
 		};
 
-		var cursor = left + (b.span - sum) / 2;
-		var childTop = top + b.h + MAP_GAP_Y;
+		kids = children[id] || [];
+		n = kids.length;
 
-		for (i = 0; i < kids.length; i++) {
-			place(kids[i], cursor, childTop);
-			cursor += (blocks[kids[i]].span || blocks[kids[i]].w) + MAP_GAP_X;
+		if (!n)
+			return;
+
+		use = depth === 0 ? Math.PI * 2 : Math.min(spread, Math.PI * 0.9);
+		step = use / n;
+		start = angle - use / 2 + step / 2;
+
+		for (i = 0; i < n; i++)
+			walk(kids[i], start + i * step, step * 0.92, depth + 1);
+	}
+
+	function putClient(c, angle, radius, parentId) {
+		var parent = pos[parentId];
+
+		pos['c:' + String(c.mac).toLowerCase()] = {
+			x: Math.cos(angle) * radius,
+			y: Math.sin(angle) * radius,
+			angle: angle,
+			depth: (parent ? parent.depth : 0) + 1,
+			client: c,
+			parent: parentId
+		};
+	}
+
+	function placeOuter(parentId, list, baseAngle, radius) {
+		var n = list.length;
+		var arc, i, t;
+
+		if (!n)
+			return;
+
+		arc = Math.min(1.05, 0.48 * Math.max(n - 1, 1));
+
+		for (i = 0; i < n; i++) {
+			t = n === 1 ? 0.5 : i / (n - 1);
+			putClient(list[i], baseAngle - arc / 2 + arc * t, radius, parentId);
 		}
 	}
 
-	place(rootId, MAP_PAD, MAP_PAD);
+	function placeControllerClients(list) {
+		var kids = children.controller || [];
+		var angles = [];
+		var gaps = [];
+		var buckets, i, a0, a1, span;
 
-	var bottom = MAP_PAD;
-	var right = MAP_PAD;
-	var id;
+		if (!kids.length) {
+			placeOuter('controller', list, -Math.PI / 2, MAP_RING + MAP_CLIENT_GAP);
+			return;
+		}
 
-	for (id in pos) {
-		bottom = Math.max(bottom, pos[id].y + pos[id].h);
-		right = Math.max(right, pos[id].x + pos[id].w);
-	}
+		kids.forEach(function(id) {
+			if (pos[id])
+				angles.push(pos[id].angle);
+		});
+		angles.sort(function(a, b) { return a - b; });
 
-	var orphanLabelY = 0;
+		for (i = 0; i < angles.length; i++) {
+			a0 = angles[i];
+			a1 = angles[(i + 1) % angles.length];
+			span = (i === angles.length - 1) ? (a1 + Math.PI * 2 - a0) : (a1 - a0);
+			gaps.push({ mid: a0 + span / 2, span: span });
+		}
 
-	if (orphanIds.length) {
-		orphanLabelY = bottom + MAP_GAP_Y;
+		buckets = gaps.map(function() { return []; });
+		list.forEach(function(c, idx) {
+			buckets[idx % buckets.length].push(c);
+		});
+		buckets.forEach(function(bucket, gi) {
+			var g = gaps[gi];
+			var n = bucket.length;
+			var arc = Math.min(g.span * 0.42, 0.5 * Math.max(n - 1, 1));
 
-		var cursor = MAP_PAD;
-		var top = orphanLabelY + 18;
+			bucket.forEach(function(c, bi) {
+				var t = n === 1 ? 0.5 : bi / (n - 1);
 
-		orphanIds.forEach(function(oid) {
-			var b = blocks[oid];
-
-			if (!b)
-				return;
-
-			pos[oid] = { x: cursor, y: top, w: b.w, h: b.h };
-			cursor += b.w + MAP_GAP_X;
-			bottom = Math.max(bottom, top + b.h);
-			right = Math.max(right, pos[oid].x + b.w);
+				putClient(c, g.mid - arc / 2 + arc * t, MAP_RING + MAP_CLIENT_GAP, 'controller');
+			});
 		});
 	}
 
-	return {
-		pos: pos,
-		width: Math.ceil(Math.max(right + MAP_PAD, 280)),
-		height: Math.ceil(Math.max(bottom + MAP_PAD, 120)),
-		orphanLabelY: orphanLabelY
-	};
+	walk('controller', -2.15, Math.PI * 2, 0);
+
+	(graph.orphans || []).forEach(function(id, i) {
+		var a;
+
+		if (pos[id])
+			return;
+
+		a = Math.PI / 5 + i * 0.85;
+		pos[id] = {
+			x: Math.cos(a) * MAP_RING,
+			y: Math.sin(a) * MAP_RING,
+			angle: a,
+			depth: 1,
+			orphan: true
+		};
+	});
+
+	Object.keys(clientLists || {}).forEach(function(id) {
+		var list = clientLists[id] || [];
+		var p = pos[id];
+
+		if (!list.length)
+			return;
+
+		if (id === 'controller') {
+			placeControllerClients(list);
+			return;
+		}
+
+		if (!p)
+			return;
+
+		placeOuter(id, list, p.angle, Math.sqrt(p.x * p.x + p.y * p.y) + MAP_CLIENT_GAP);
+	});
+
+	return pos;
 }
 
 function parentCycle(id, parentId, parentOf) {
@@ -898,37 +957,6 @@ function meshMapGraph(state) {
 	return { children: children, orphans: orphans, parentOf: parentOf };
 }
 
-function meshLinkLabel(m) {
-	if (!m)
-		return '';
-
-	if (m.connection === 'wired')
-		return _('Cable');
-
-	if (m.connection !== 'wifi')
-		return '';
-
-	return m.uplink_band
-		? '%s · %s'.format(_('Radio'), common.bandLabel(m.uplink_band))
-		: _('Radio');
-}
-
-function mapCountText(n) {
-	return '%s: %s'.format(_('Client count'), String(n || 0));
-}
-
-function mapFit(text, max) {
-	text = String(text || '');
-
-	if (/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(text))
-		return text;
-
-	if (text.length <= max)
-		return text;
-
-	return text.slice(0, Math.max(1, max - 1)) + '\u2026';
-}
-
 function mapClientLabel(c, hints, ov) {
 	var named = '';
 
@@ -957,6 +985,8 @@ function mapClientSig(cache) {
 			c.node || '',
 			c.state || '',
 			c.wired ? '1' : '0',
+			c.band || '',
+			mapClientRssi(c) == null ? '' : String(mapClientRssi(c)),
 			mapClientLabel(c, cache.hints, cache.ov)
 		].join('\t');
 	}).join('\n');
@@ -1143,146 +1173,279 @@ function ri(n) {
 	return Math.round(n);
 }
 
+function mapRim(x, y, tx, ty, r) {
+	var dx = tx - x;
+	var dy = ty - y;
+	var len = Math.sqrt(dx * dx + dy * dy) || 1;
+
+	return { x: x + dx / len * r, y: y + dy / len * r };
+}
+
 function mapEdge(svg, x1, y1, x2, y2, kind, label) {
-	var midX = (x1 + x2) / 2;
-	var midY = (y1 + y2) / 2;
-	var cls = 'roamd-map-edge' + (kind === 'wifi' ? ' roamd-map-edge-radio' : '');
+	var dx = x2 - x1;
+	var dy = y2 - y1;
+	var len = Math.sqrt(dx * dx + dy * dy) || 1;
+	var px = -dy / len;
+	var py = dx / len;
+	var mx, my;
+
+	if (py > 0) {
+		px = -px;
+		py = -py;
+	}
+
+	mx = x1 + dx * 0.5 + px * 13;
+	my = y1 + dy * 0.5 + py * 13;
+	var cls = 'roamd-map-edge' + (kind === 'wifi' ? ' roamd-map-edge-radio' : ' roamd-map-edge-cable');
 	var tw;
 
-	svg.appendChild(svgEl('path', {
+	svg.appendChild(svgEl('line', {
 		'class': cls,
-		'd': 'M %d,%d C %d,%d %d,%d %d,%d'.format(ri(x1), ri(y1), ri(x1), ri(midY), ri(x2), ri(midY), ri(x2), ri(y2))
+		x1: ri(x1),
+		y1: ri(y1),
+		x2: ri(x2),
+		y2: ri(y2)
 	}));
 
 	if (!label)
 		return;
 
-	tw = Math.round(label.length * 6.8 + 12);
+	tw = Math.round(label.length * 6.6 + 10);
 	svg.appendChild(svgEl('rect', {
 		'class': 'roamd-map-edge-label-bg',
-		x: ri(midX - tw / 2),
-		y: ri(midY - 9),
+		x: ri(mx - tw / 2),
+		y: ri(my - 8),
 		width: tw,
-		height: 18,
+		height: 16,
 		rx: 3
 	}));
 	svg.appendChild(svgEl('text', {
-		'class': 'roamd-map-edge-label',
-		x: ri(midX),
-		y: ri(midY + 4),
+		'class': 'roamd-map-edge-label' + (kind === 'wifi' ? ' roamd-map-edge-label-radio' : ''),
+		x: ri(mx),
+		y: ri(my + 4),
 		'text-anchor': 'middle'
 	}, [ label ]));
 }
 
-function drawMapClients(g, item, box) {
-	var clients = item.clients || [];
-	var cols = mapChipCols(clients.length);
-	var inner = cols * MAP_CHIP_W + (cols - 1) * MAP_CHIP_GAP;
-	var startX = box.x + (box.w - inner) / 2;
-	var startY = box.y + MAP_NODE_H + 10;
-	var hints = (mapClientCache && mapClientCache.hints) || {};
-	var ov = (mapClientCache && mapClientCache.ov) || {};
+function mapNodeRadius(kind) {
+	if (kind === 'controller')
+		return 16;
 
-	clients.forEach(function(c, i) {
-		var col = i % cols;
-		var row = Math.floor(i / cols);
-		var x = startX + col * (MAP_CHIP_W + MAP_CHIP_GAP);
-		var y = startY + row * (MAP_CHIP_H + MAP_CHIP_GAP);
-		var name = mapClientLabel(c, hints, ov);
-		var chip = svgEl('g', {
-			'class': 'roamd-map-chip-hit' + (c.state === 'unknown' ? ' roamd-map-chip-unknown' : '')
-		});
+	if (kind === 'client')
+		return 7;
 
-		chip.appendChild(svgEl('title', {}, [
-			name === c.mac ? c.mac : '%s (%s)'.format(name, c.mac)
-		]));
-		chip.appendChild(svgEl('rect', {
-			'class': 'roamd-map-chip',
-			x: ri(x),
-			y: ri(y),
-			width: MAP_CHIP_W,
-			height: MAP_CHIP_H,
-			rx: 4
-		}));
-		chip.appendChild(svgEl('circle', {
-			cx: ri(x + 11),
-			cy: ri(y + MAP_CHIP_H / 2),
-			r: 3.5,
-			'class': 'roamd-map-dot'
-		}));
-		chip.appendChild(svgEl('text', {
-			'class': 'roamd-map-chip-text',
-			x: ri(x + 20),
-			y: ri(y + 16)
-		}, [ mapFit(name, 18) ]));
-		chip.addEventListener('click', function(ev) {
-			ev.preventDefault();
-			ev.stopPropagation();
-			openClients(item.id);
-		});
-		g.appendChild(chip);
-	});
+	return 11;
 }
 
-function drawMapNode(svg, item, box, state) {
-	var g = svgEl('g', {
-		'class': 'roamd-map-node' +
-			(item.kind === 'controller' ? ' roamd-map-node-controller' : '') +
-			(item.online ? '' : ' roamd-map-node-off')
-	});
-	var role = item.kind === 'controller' ? _('controller') : _('node');
+function mapTextWidth(text) {
+	return Math.min(String(text || '').length, 40) * 7.1;
+}
 
-	g.appendChild(svgEl('title', {}, [ '%s, %s'.format(item.name, mapCountText(item.count)) ]));
-	g.appendChild(svgEl('rect', {
-		'class': 'roamd-map-box',
-		x: ri(box.x),
-		y: ri(box.y),
-		width: ri(box.w),
-		height: ri(box.h),
-		rx: 4
-	}));
-	g.appendChild(svgEl('text', {
-		'class': 'roamd-map-title',
-		x: ri(box.x + box.w / 2),
-		y: ri(box.y + 24),
-		'text-anchor': 'middle'
-	}, [ mapFit(item.name, Math.max(8, Math.floor((box.w - 24) / 8))) ]));
-	g.appendChild(svgEl('text', {
-		'class': 'roamd-map-sub',
-		x: ri(box.x + box.w / 2),
-		y: ri(box.y + 44),
-		'text-anchor': 'middle'
-	}, [
-		svgEl('tspan', {}, [ role + ' · ' ]),
-		svgEl('tspan', { 'class': item.online ? 'roamd-map-ok' : 'roamd-map-wait' }, [
-			item.online ? _('online') : _('offline')
-		])
-	]));
-	g.appendChild(svgEl('text', {
-		'class': 'roamd-map-count',
-		x: ri(box.x + box.w / 2),
-		y: ri(box.y + 64),
-		'text-anchor': 'middle'
-	}, [ mapCountText(item.count) ]));
+function mapLabelLines(name) {
+	var text = String(name || '');
+	var parts, best, score, i, left, right, diff;
 
-	if (item.clients && item.clients.length) {
-		g.appendChild(svgEl('line', {
-			'class': 'roamd-map-rule',
-			x1: ri(box.x + 12),
-			x2: ri(box.x + box.w - 12),
-			y1: ri(box.y + MAP_NODE_H),
-			y2: ri(box.y + MAP_NODE_H)
-		}));
-		drawMapClients(g, item, box);
+	if (text.length <= 16)
+		return [ text ];
+
+	parts = text.split(/\s+/);
+	if (parts.length < 2)
+		return [ text ];
+
+	best = 1;
+	score = 1e9;
+
+	for (i = 1; i < parts.length; i++) {
+		left = parts.slice(0, i).join(' ');
+		right = parts.slice(i).join(' ');
+		diff = Math.abs(left.length - right.length);
+		if (diff < score) {
+			score = diff;
+			best = i;
+		}
 	}
 
-	if (item.kind === 'controller' || item.member) {
+	return [ parts.slice(0, best).join(' '), parts.slice(best).join(' ') ];
+}
+
+function mapAngDiff(a, b) {
+	var d = a - b;
+
+	while (d > Math.PI)
+		d -= Math.PI * 2;
+
+	while (d < -Math.PI)
+		d += Math.PI * 2;
+
+	return d;
+}
+
+function mapLabelAt(p, r, lines, angles) {
+	var angs = [];
+	var width = 0;
+	var best = null;
+	var i, a0, a1, span, mid, half, guard, dist, box, k, anchor;
+
+	lines = lines && lines.length ? lines : [ '' ];
+	lines.forEach(function(line) {
+		width = Math.max(width, mapTextWidth(line));
+	});
+
+	(angles || []).forEach(function(a) {
+		if (a == null || isNaN(a))
+			return;
+
+		angs.push(a);
+	});
+	angs.sort(function(a, b) { return a - b; });
+
+	if (!angs.length)
+		angs.push((p.angle || 0) + Math.PI);
+
+	for (i = 0; i < angs.length; i++) {
+		a0 = angs[i];
+		a1 = angs[(i + 1) % angs.length];
+		span = (i === angs.length - 1) ? (a1 + Math.PI * 2 - a0) : (a1 - a0);
+		if (!best || span > best.span)
+			best = { span: span, mid: a0 + span / 2 };
+	}
+
+	mid = best.mid;
+	half = best.span / 2;
+	guard = Math.max(0.15, half - 0.18);
+	anchor = Math.abs(Math.cos(mid)) >= 0.62 ? (Math.cos(mid) > 0 ? 'start' : 'end') : 'middle';
+
+	function boxAt(d) {
+		var cx = Math.cos(mid) * d;
+		var cy = Math.sin(mid) * d;
+		var y = cy + 4 - (lines.length - 1) * 7.5;
+		var left = cx - width / 2;
+		var right = cx + width / 2;
+
+		if (anchor === 'start') {
+			left = cx;
+			right = cx + width;
+		} else if (anchor === 'end') {
+			left = cx - width;
+			right = cx;
+		}
+
+		return {
+			left: left,
+			right: right,
+			top: y - 13,
+			bot: y + (lines.length - 1) * 15 + 3,
+			x: cx,
+			y: y
+		};
+	}
+
+	function clear(b) {
+		var corners = [
+			[ b.left, b.top ],
+			[ b.right, b.top ],
+			[ b.left, b.bot ],
+			[ b.right, b.bot ]
+		];
+		var n, dx, dy, ang;
+
+		for (n = 0; n < corners.length; n++) {
+			dx = corners[n][0];
+			dy = corners[n][1];
+			if (Math.sqrt(dx * dx + dy * dy) < r + 8)
+				return false;
+
+			ang = Math.atan2(dy, dx);
+			if (half < Math.PI - 0.05 && Math.abs(mapAngDiff(ang, mid)) > guard)
+				return false;
+		}
+
+		return true;
+	}
+
+	dist = r + 18;
+	box = boxAt(dist);
+
+	for (k = 0; k < 24 && !clear(box); k++) {
+		dist += 4;
+		box = boxAt(dist);
+	}
+
+	return {
+		x: p.x + box.x,
+		y: p.y + box.y,
+		anchor: anchor,
+		lines: lines,
+		x0: p.x + box.left,
+		y0: p.y + box.top,
+		x1: p.x + box.right,
+		y1: p.y + box.bot
+	};
+}
+
+function drawGraphNode(svg, spec, state) {
+	var p = spec.pos;
+	var r = mapNodeRadius(spec.kind);
+	var g = svgEl('g', {
+		'class': 'roamd-map-node' +
+			(spec.kind === 'controller' ? ' roamd-map-node-controller' : '') +
+			(spec.kind === 'client' ? ' roamd-map-node-client' : '') +
+			(spec.online ? '' : ' roamd-map-node-off') +
+			(spec.unknown ? ' roamd-map-node-unknown' : '')
+	});
+	var label = spec.label;
+	var halo = spec.kind === 'controller' ? 'controller' : (spec.kind === 'client' ? 'client' : 'router');
+	var text;
+
+	g.appendChild(svgEl('title', {}, [ spec.tip || spec.name ]));
+	g.appendChild(svgEl('circle', {
+		'class': 'roamd-map-halo roamd-map-halo-' + halo,
+		cx: ri(p.x),
+		cy: ri(p.y),
+		r: r + 7
+	}));
+
+	if (spec.kind === 'controller')
+		g.appendChild(svgEl('polygon', {
+			'class': 'roamd-map-star' + (spec.online ? '' : ' roamd-map-off'),
+			points: starPoints(p.x, p.y, r, r * 0.42, 5)
+		}));
+	else
+		g.appendChild(svgEl('circle', {
+			'class': (spec.kind === 'client' ? 'roamd-map-client' : 'roamd-map-router') +
+				(spec.online ? '' : ' roamd-map-off'),
+			cx: ri(p.x),
+			cy: ri(p.y),
+			r: r
+		}));
+
+	text = svgEl('text', {
+		'class': 'roamd-map-label',
+		x: ri(label.x),
+		y: ri(label.y),
+		'text-anchor': label.anchor
+	});
+	(label.lines || [ spec.name ]).forEach(function(line, i) {
+		text.appendChild(svgEl('tspan', {
+			x: ri(label.x),
+			dy: i ? 15 : 0
+		}, [ line ]));
+	});
+	g.appendChild(text);
+
+	if (spec.kind === 'controller' || spec.member) {
 		g.setAttribute('class', g.getAttribute('class') + ' roamd-map-node-btn');
 		g.addEventListener('click', function() {
-			if (item.kind === 'controller')
+			if (spec.kind === 'controller')
 				controllerDialog(state);
 			else
-				nodeDialog(item.member, state, refreshNodes);
+				nodeDialog(spec.member, state, refreshNodes);
+		});
+	} else if (spec.kind === 'client') {
+		g.setAttribute('class', g.getAttribute('class') + ' roamd-map-node-btn');
+		g.addEventListener('click', function(ev) {
+			ev.preventDefault();
+			openClients(spec.parent || '');
 		});
 	}
 
@@ -1293,11 +1456,11 @@ function renderMeshMap(state) {
 	var show = !!(mapShowClients && mapClientCache && !mapClientCache.failed);
 	var graph = meshMapGraph(state);
 	var byNode = show ? mapClientsByNode(state) : {};
-	var blocks = {};
 	var info = {};
 	var self = state.self || {};
-	var svg;
-	var layout;
+	var raw, specs, bounds, width, height, dx, dy, svg;
+	var hints = (mapClientCache && mapClientCache.hints) || {};
+	var ov = (mapClientCache && mapClientCache.ov) || {};
 
 	if (mapShowClients)
 		ensureMapClients();
@@ -1306,11 +1469,8 @@ function renderMeshMap(state) {
 		id: 'controller',
 		name: state.controller_name || self.hostname || _('This device'),
 		kind: 'controller',
-		online: true,
-		count: state.controller_clients || 0,
-		clients: byNode.controller || []
+		online: true
 	};
-	blocks.controller = mapBlock(info.controller.clients.length, show);
 
 	(state.members || []).forEach(function(m) {
 		if (!m || !m.id || m.id === 'controller')
@@ -1321,16 +1481,14 @@ function renderMeshMap(state) {
 			name: m.name || m.hostname || m.id,
 			kind: 'node',
 			online: !!m.online,
-			count: m.client_count || 0,
-			clients: byNode[m.id] || [],
-			member: m
+			member: m,
+			orphan: (graph.orphans || []).indexOf(m.id) >= 0
 		};
-		blocks[m.id] = mapBlock(info[m.id].clients.length, show);
 	});
 
 	if (show) {
 		Object.keys(byNode).forEach(function(id) {
-			if (blocks[id])
+			if (info[id])
 				return;
 
 			info[id] = {
@@ -1338,53 +1496,191 @@ function renderMeshMap(state) {
 				name: id,
 				kind: 'node',
 				online: true,
-				count: byNode[id].length,
-				clients: byNode[id],
-				member: null
+				member: null,
+				orphan: true
 			};
-			blocks[id] = mapBlock(byNode[id].length, true);
 			graph.orphans.push(id);
 		});
 	}
 
-	layout = layoutMesh(blocks, graph.children, 'controller', graph.orphans);
+	raw = layoutRadial(graph, show ? byNode : {});
+	specs = [];
+
+	Object.keys(raw).forEach(function(key) {
+		var p = raw[key];
+		var spec, name;
+
+		if (p.client) {
+			name = mapClientLabel(p.client, hints, ov);
+			spec = {
+				key: key,
+				pos: p,
+				kind: 'client',
+				name: name,
+				client: p.client,
+				online: p.client.state !== 'unknown',
+				unknown: p.client.state === 'unknown',
+				parent: p.parent,
+				tip: name === p.client.mac ? p.client.mac : '%s (%s)'.format(name, p.client.mac)
+			};
+			specs.push(spec);
+			return;
+		}
+
+		if (!info[key])
+			return;
+
+		spec = {
+			key: key,
+			pos: p,
+			kind: info[key].kind === 'controller' ? 'controller' : 'node',
+			name: info[key].name,
+			online: info[key].kind === 'controller' ? true : !!info[key].online,
+			member: info[key].member || null,
+			tip: info[key].orphan ? '%s, %s'.format(info[key].name, _('Parent unknown')) : info[key].name
+		};
+		specs.push(spec);
+	});
+
+	function linkOf(target) {
+		var member = info[target] && info[target].member;
+		var kind = member && member.connection === 'wifi' ? 'wifi'
+			: (member && member.connection === 'wired' ? 'wired' : '');
+
+		return { kind: kind, dbm: mapUplinkRssi(member) };
+	}
+
+	bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0, any: false };
+
+	function grow(x, y) {
+		if (!bounds.any) {
+			bounds.minX = bounds.maxX = x;
+			bounds.minY = bounds.maxY = y;
+			bounds.any = true;
+			return;
+		}
+
+		bounds.minX = Math.min(bounds.minX, x);
+		bounds.minY = Math.min(bounds.minY, y);
+		bounds.maxX = Math.max(bounds.maxX, x);
+		bounds.maxY = Math.max(bounds.maxY, y);
+	}
+
+	function linked(a, b) {
+		if (!a || !b)
+			return;
+
+		if (!a._nbrs)
+			a._nbrs = [];
+
+		if (!b._nbrs)
+			b._nbrs = [];
+
+		a._nbrs.push(Math.atan2(b.pos.y - a.pos.y, b.pos.x - a.pos.x));
+		b._nbrs.push(Math.atan2(a.pos.y - b.pos.y, a.pos.x - b.pos.x));
+	}
+
+	function specBy(key) {
+		var i;
+
+		for (i = 0; i < specs.length; i++)
+			if (specs[i].key === key)
+				return specs[i];
+
+		return null;
+	}
+
+	Object.keys(graph.children || {}).forEach(function(pid) {
+		(graph.children[pid] || []).forEach(function(cid) {
+			linked(specBy(pid), specBy(cid));
+		});
+	});
+	specs.forEach(function(spec) {
+		if (spec.kind === 'client')
+			linked(spec, specBy(spec.parent));
+	});
+	specs.forEach(function(spec) {
+		spec.label = mapLabelAt(spec.pos, mapNodeRadius(spec.kind), mapLabelLines(spec.name), spec._nbrs || []);
+		grow(spec.pos.x - mapNodeRadius(spec.kind), spec.pos.y - mapNodeRadius(spec.kind));
+		grow(spec.pos.x + mapNodeRadius(spec.kind), spec.pos.y + mapNodeRadius(spec.kind));
+		grow(spec.label.x0, spec.label.y0);
+		grow(spec.label.x1, spec.label.y1);
+	});
+
+	width = Math.max(680, Math.ceil(bounds.maxX - bounds.minX + MAP_PAD * 2));
+	height = Math.max(440, Math.ceil(bounds.maxY - bounds.minY + MAP_PAD * 2));
+	dx = (width - (bounds.maxX - bounds.minX)) / 2 - bounds.minX;
+	dy = (height - (bounds.maxY - bounds.minY)) / 2 - bounds.minY;
+
+	specs.forEach(function(spec) {
+		spec.pos = {
+			x: spec.pos.x + dx,
+			y: spec.pos.y + dy,
+			angle: spec.pos.angle,
+			depth: spec.pos.depth
+		};
+		spec.label.x += dx;
+		spec.label.y += dy;
+	});
+
+	function at(key) {
+		var i;
+
+		for (i = 0; i < specs.length; i++)
+			if (specs[i].key === key)
+				return specs[i];
+
+		return null;
+	}
+
 	svg = svgEl('svg', {
 		'class': 'roamd-map-svg',
-		'width': layout.width,
-		'height': layout.height,
-		'viewBox': '0 0 %d %d'.format(layout.width, layout.height),
+		'width': width,
+		'height': height,
+		'viewBox': '0 0 %d %d'.format(width, height),
 		'role': 'img',
 		'aria-label': _('Map')
 	});
 
-	Object.keys(graph.children).forEach(function(pid) {
+	Object.keys(graph.children || {}).forEach(function(pid) {
 		(graph.children[pid] || []).forEach(function(cid) {
-			var from = layout.pos[pid];
-			var to = layout.pos[cid];
-			var member = info[cid] && info[cid].member;
-			var kind = member && member.connection === 'wifi' ? 'wifi'
-				: (member && member.connection === 'wired' ? 'wired' : '');
+			var from = at(pid);
+			var to = at(cid);
+			var link, a, b, rr, rt;
 
 			if (!from || !to)
 				return;
 
-			mapEdge(svg,
-				from.x + from.w / 2, from.y + from.h,
-				to.x + to.w / 2, to.y,
-				kind, meshLinkLabel(member));
+			link = linkOf(cid);
+			rr = mapNodeRadius(from.kind);
+			rt = mapNodeRadius(to.kind);
+			a = mapRim(from.pos.x, from.pos.y, to.pos.x, to.pos.y, rr);
+			b = mapRim(to.pos.x, to.pos.y, from.pos.x, from.pos.y, rt);
+			mapEdge(svg, a.x, a.y, b.x, b.y, link.kind, mapEdgeMetric(link.kind, link.dbm));
 		});
 	});
 
-	if (layout.orphanLabelY)
-		svg.appendChild(svgEl('text', {
-			'class': 'roamd-map-orphan',
-			x: MAP_PAD,
-			y: ri(layout.orphanLabelY + 12)
-		}, [ _('Parent unknown') ]));
+	if (show) {
+		specs.forEach(function(spec) {
+			var parent, a, b, kind, dbm;
 
-	Object.keys(layout.pos).forEach(function(id) {
-		if (info[id])
-			drawMapNode(svg, info[id], layout.pos[id], state);
+			if (spec.kind !== 'client')
+				return;
+
+			parent = at(spec.parent);
+			if (!parent)
+				return;
+
+			kind = spec.client && spec.client.wired ? 'wired' : 'wifi';
+			dbm = kind === 'wifi' ? mapClientRssi(spec.client) : null;
+			a = mapRim(parent.pos.x, parent.pos.y, spec.pos.x, spec.pos.y, mapNodeRadius(parent.kind));
+			b = mapRim(spec.pos.x, spec.pos.y, parent.pos.x, parent.pos.y, mapNodeRadius('client'));
+			mapEdge(svg, a.x, a.y, b.x, b.y, kind, mapEdgeMetric(kind, dbm));
+		});
+	}
+
+	specs.forEach(function(spec) {
+		drawGraphNode(svg, spec, state);
 	});
 
 	return E('div', { 'class': 'roamd-map' }, [
