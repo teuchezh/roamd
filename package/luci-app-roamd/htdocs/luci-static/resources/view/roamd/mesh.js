@@ -19,7 +19,7 @@ var meshViewState = null;
 var mapCam = { x: 0, y: 0, k: 1, sig: null, user: false, w: 0, h: 0 };
 var mapBindSeq = 0;
 var mapObserver = null;
-var mapLive = { stamp: '', macs: {}, bytes: {} };
+var mapLive = { macs: {}, bytes: {} };
 
 function locationHash() {
 	try {
@@ -839,8 +839,6 @@ function mapClientSig(cache) {
 			c.band || '',
 			mapClientRssi(c) == null ? '' : String(mapClientRssi(c)),
 			c.rate ? String(c.rate) : '',
-			c.rx_bytes ? String(c.rx_bytes) : '',
-			c.tx_bytes ? String(c.tx_bytes) : '',
 			mapClientLabel(c, cache.hints, cache.ov)
 		].join('\t');
 	}).join('\n');
@@ -895,21 +893,25 @@ function mapClientsByNode(state) {
 }
 
 function ensureMapClients() {
-	var seq = ++mapClientSeq;
+	var seq;
 
-	Promise.all([
+	if (nodesView !== 'map' || !mapShowClients)
+		return;
+
+	seq = ++mapClientSeq;
+
+	return Promise.all([
 		callMeshClients().catch(function() { return null; }),
 		common.hostHints().catch(function() { return {}; }),
 		uci.load('roamd').catch(function() { return null; })
 	]).then(function(res) {
-		var next;
-		var list;
+		var next, list, trafficChanged;
 
 		if (seq !== mapClientSeq)
 			return;
 
 		if (!res[0]) {
-			next = { clients: [], hints: {}, ov: {}, failed: true, stamp: 'failed' };
+			next = { clients: [], hints: {}, ov: {}, failed: true };
 		} else {
 			list = (res[0] && res[0].clients) || res[0] || [];
 
@@ -922,10 +924,10 @@ function ensureMapClients() {
 				ov: safeOverrides(),
 				failed: false
 			};
-			next.stamp = mapClientSig(next);
 		}
 
-		if (mapClientSig(next) === mapClientSig(mapClientCache))
+		trafficChanged = noteClientTraffic(next);
+		if (!trafficChanged && mapClientCache && mapClientSig(next) === mapClientSig(mapClientCache))
 			return;
 
 		mapClientCache = next;
@@ -940,6 +942,7 @@ function ensureMapClients() {
 			return;
 
 		mapClientCache = { clients: [], hints: {}, ov: {}, failed: true };
+		noteClientTraffic(mapClientCache);
 
 		if (nodesView === 'map' && mapShowClients)
 			replaceNodes(meshViewState);
@@ -960,6 +963,7 @@ function nodesViewSwitch() {
 
 					nodesView = id;
 					replaceNodes(meshViewState);
+					ensureMapClients();
 				}
 			}),
 			E('span', {}, label)
@@ -984,6 +988,7 @@ function mapClientSwitch() {
 			'change': function(ev) {
 				mapShowClients = !!ev.target.checked;
 				replaceNodes(meshViewState);
+				ensureMapClients();
 			}
 		}),
 		E('span', { 'class': 'roamd-switch-ui', 'aria-hidden': 'true' }),
@@ -1956,14 +1961,9 @@ function mapBridgeActive(src) {
 function noteClientTraffic(cache) {
 	var bytes = {};
 	var macs = {};
+	var previousMacs = mapLive.macs;
 
-	if (!cache || cache.failed)
-		return;
-
-	if (cache.stamp && cache.stamp === mapLive.stamp)
-		return;
-
-	(cache.clients || []).forEach(function(c) {
+	cache.clients.forEach(function(c) {
 		var key, rx, tx, prev;
 
 		if (!c || !c.mac)
@@ -1987,9 +1987,11 @@ function noteClientTraffic(cache) {
 		bytes[key] = { rx: rx, tx: tx };
 	});
 
-	mapLive.stamp = cache.stamp || '';
 	mapLive.bytes = bytes;
 	mapLive.macs = macs;
+
+	return Object.keys(previousMacs).length !== Object.keys(macs).length ||
+		Object.keys(macs).some(function(mac) { return !previousMacs[mac]; });
 }
 
 function mapRecentMotion(state) {
@@ -2513,11 +2515,6 @@ function renderMeshMap(state, chrome) {
 	var scene, sig, top, overlay, stage, bar;
 
 	chrome = chrome || {};
-
-	if (mapShowClients)
-		ensureMapClients();
-
-	noteClientTraffic(mapClientCache);
 
 	items.push({
 		id: 'controller',
@@ -3118,6 +3115,7 @@ function refreshNodes() {
 		fresh = fresh || {};
 		replaceNodes(fresh);
 		settingsSync(fresh);
+		return ensureMapClients();
 	});
 }
 
