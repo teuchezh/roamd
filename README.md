@@ -30,7 +30,12 @@
 | Автонастройка | Опции 802.11k/v/r прописываются в `/etc/config/wireless` сами |
 
 Пороги подобраны консервативно: демон вмешивается, только когда переход точно не
-ухудшит связь.
+ухудшит связь. На вкладке **Параметры переключения** кнопка **Подобрать** читает
+журнал переходов и записывает в `/etc/config/roamd` пороги `rssi_low`,
+`node_rssi_diff` и `rssi_diff`. Удачные переходы сдвигают пороги к более раннему
+переключению. Пинг-понг — клиент ушёл с A на B и вернулся за 180 секунд. Два таких
+круга на одной паре поднимают пороги. Одного круга для этого мало. Повторное
+нажатие по тому же журналу значения не двигает. Кнопка никого не отключает.
 
 Кроме роуминга внутри одного роутера, `roamd` объединяет несколько устройств OpenWrt
 в **Mesh Wi-Fi-систему** — вкладка **MESH** в LuCI: захват устройства из локальной
@@ -38,6 +43,15 @@
 становится «тупой» точкой доступа в единой подсети — без своего DHCP и NAT, пакеты
 на него контроллер ставит сам, под его ветку и архитектуру. Связь узлов — кабелем
 или по скрытой беспроводной транспортной сети. Один бинарник совмещает обе роли.
+
+В списке устройств объявленное имя (DHCP или mDNS, поле `host`) стоит над MAC,
+написанным мельче. Имени нет — в строке только MAC. Имя, заданное в **Настройках**,
+важнее.
+
+На вкладке **Узлы** переключатель **Панель** / **Карта**. Карта — радиальный граф:
+контроллер в центре, узлы вокруг, устройства ещё дальше, когда включено
+**Показать устройства**. Кабель — сплошная линия, радио — пунктир. На ребре — RSSI,
+у кабеля — прочерк.
 
 ## Быстрый старт
 
@@ -102,7 +116,12 @@ Two packages:
 | Automatic configuration | The 802.11k/v/r options are written into `/etc/config/wireless` for you |
 
 Thresholds are deliberately conservative: the daemon steps in only when the transition is
-certain not to make the link worse.
+certain not to make the link worse. On the **Switching parameters** tab the **Tune** button
+reads the transition log and writes `rssi_low`, `node_rssi_diff` and `rssi_diff` into
+`/etc/config/roamd`. Successful moves nudge the thresholds toward an earlier handoff.
+A ping-pong is a client going from A to B and back within 180 seconds. Two such round-trips
+on the same pair raise the thresholds. One round-trip is not enough to raise them. Pressing
+the button again on the same log does not move the values. It does not disconnect anyone.
 
 Beyond roaming inside a single router, `roamd` joins several OpenWrt devices into a
 **Mesh Wi-Fi system** — the **MESH** tab in LuCI: capturing a device from the local network,
@@ -110,6 +129,13 @@ rolling the profile out to the nodes, a shared client table and a transition log
 becomes a dumb access point in one common subnet — with no DHCP or NAT of its own; the
 controller installs the packages on it itself, matching the node's branch and architecture.
 Nodes are linked by cable or over a hidden wireless backhaul. One binary covers both roles.
+
+In the device list an announced name (DHCP or mDNS, the `host` field) is shown above a
+smaller MAC. With no name, the row is the MAC alone. A name set in **Settings** wins.
+
+The **Nodes** tab has a **Cards** / **Map** switch. The map is a radial graph: the controller
+in the centre, nodes around it, and clients further out when **Show clients** is on. Cable is
+a solid line, radio is dashed, and the edge shows the RSSI or a dash for cable.
 
 ## Quick start
 
