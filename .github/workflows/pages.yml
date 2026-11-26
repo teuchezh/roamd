@@ -16,13 +16,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy feeds
+  collect:
+    name: Collect feeds
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
 
@@ -37,6 +34,16 @@ jobs:
           path: site
           name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
 
+  # deploy-pages lists artifacts as soon as it starts. In the same job as the
+  # upload, that list is still empty (actions/deploy-pages#451).
+  deploy:
+    name: Deploy feeds
+    needs: collect
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v5
         with:
