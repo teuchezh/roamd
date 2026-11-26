@@ -337,6 +337,17 @@ void mesh_log_dump(struct blob_buf *b, unsigned int limit)
 	blobmsg_close_array(b, arr);
 }
 
+void mesh_log_foreach(void (*cb)(const struct mesh_event *ev, void *priv), void *priv)
+{
+	unsigned int i;
+
+	if (!cb)
+		return;
+
+	for (i = 0; i < ring_count; i++)
+		cb(&ring[(ring_head + i) % MESH_LOG_MAX], priv);
+}
+
 enum {
 	EVF_SEQ,
 	EVF_TS,

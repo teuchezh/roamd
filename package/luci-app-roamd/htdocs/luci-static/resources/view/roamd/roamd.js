@@ -16,6 +16,12 @@ var callStatus = rpc.declare({
 	expect: { }
 });
 
+var callTune = rpc.declare({
+	object: 'roamd',
+	method: 'tune',
+	expect: { }
+});
+
 var statusData = {};
 var hostHints = {};
 
@@ -51,6 +57,99 @@ var PAIR_STATE = {
 	degraded: { text: _('partly'), color: '#c98000' },
 	broken: { text: _('no'), color: '#d33' }
 };
+
+function tuneFlag(block) {
+	return !!(block && (block.set === true || block.set === 1 || block.set === '1'));
+}
+
+function tuneNum(value) {
+	var n = parseInt(value, 10);
+
+	return isNaN(n) ? null : n;
+}
+
+function tuneRows(res) {
+	var rows = [];
+
+	function add(block, text) {
+		var before = tuneNum(block && block.before);
+		var after = tuneNum(block && block.after);
+
+		if (!tuneFlag(block) || before === null || after === null || before === after)
+			return;
+
+		rows.push(E('li', {}, text.format(before, after)));
+	}
+
+	add(res.rssi_low, _('Weak signal: %d dBm → %d dBm'));
+	add(res.node_rssi_diff, _('Device difference: %d dB → %d dB'));
+	add(res.rssi_diff, _('Band difference: %d dB → %d dB'));
+
+	return rows;
+}
+
+function tuneSummary(res, anySet, changed) {
+	if (!anySet)
+		return _('Nothing was changed. The transition log does not yet show enough finished moves.');
+
+	if (!changed)
+		return _('Nothing was changed. The saved values already match the transition log.');
+
+	if (res.action === 'tighten')
+		return _('Clients bounce between the same places, so a handoff now waits for a weaker signal and a larger margin.');
+
+	if (res.action === 'mixed')
+		return _('Some places keep clients and others bounce, so the margins were moved separately.');
+
+	return _('Handoffs can start earlier: a neighbour keeps clients and the moves stay put, so the weak-signal level and the required margin were relaxed.');
+}
+
+function tuneFromLog() {
+	return callTune().then(function(res) {
+		var rows, anySet, changed, body;
+
+		res = res || {};
+		rows = tuneRows(res);
+		anySet = tuneFlag(res.rssi_low) || tuneFlag(res.node_rssi_diff) || tuneFlag(res.rssi_diff);
+		changed = res.changed === true || res.changed === 1 || res.changed === '1';
+		body = [
+			E('p', {}, tuneSummary(res, anySet, changed)),
+			E('p', {}, _('Moves %d, stays %d, failed requests %d, bounces %d.').format(
+				res.moves || 0, res.sticky || 0, res.failed || 0, res.pingpong || 0))
+		];
+
+		if (rows.length)
+			body.push(E('ul', {}, rows));
+
+		ui.showModal(_('Roaming thresholds'), [
+			E('div', {}, body),
+			E('div', { 'class': 'right' }, [
+				E('button', {
+					'type': 'button',
+					'class': 'btn cbi-button-positive',
+					'click': function() {
+						ui.hideModal();
+
+						if (changed)
+							location.reload();
+					}
+				}, _('Close'))
+			])
+		]);
+	}, function() {
+		ui.addNotification(null, E('p', {}, _('The transition log could not be read.')));
+	});
+}
+
+var TuneButton = form.DummyValue.extend({
+	renderWidget: function() {
+		return E('button', {
+			'type': 'button',
+			'class': 'cbi-button cbi-button-apply',
+			'click': ui.createHandlerFn(this, tuneFromLog)
+		}, _('Tune'));
+	}
+});
 
 function countClients() {
 	var n = 0;
@@ -659,6 +758,10 @@ return view.extend({
 			null, _('The defaults suit most homes. Change them only if the behaviour does not suit you.'));
 		sub = o.subsection;
 		sub.addremove = false;
+
+		if (!common.isNode(meshState))
+			sub.option(TuneButton, '_tune', _('Tune from the transition log'),
+				_('Set the weak-signal level and the signal margins from moves in the transition log. This runs once, when you press the button, and does not disconnect anyone.'));
 
 		o = sub.option(form.Value, 'rssi_good', _('Good signal'),
 			_('Above this level the preferred band is considered usable and the client is steered to it.'));

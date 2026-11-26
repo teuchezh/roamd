@@ -6,6 +6,7 @@
 
 #include "roamd.h"
 #include "mesh.h"
+#include "tune.h"
 
 static struct blob_buf b;
 
@@ -781,6 +782,20 @@ static int roamd_mesh_log_ingest(struct ubus_context *ctx, struct ubus_object *o
 	return 0;
 }
 
+static int roamd_tune(struct ubus_context *ctx, struct ubus_object *obj,
+		      struct ubus_request_data *req, const char *method,
+		      struct blob_attr *msg)
+{
+	if (mesh.role != MESH_CONTROLLER)
+		return UBUS_STATUS_PERMISSION_DENIED;
+
+	blob_buf_init(&b, 0);
+	roam_tune_apply(&b);
+	ubus_send_reply(ctx, req, b.head);
+
+	return 0;
+}
+
 static const struct ubus_method roamd_methods[] = {
 	UBUS_METHOD_NOARG("status", roamd_status),
 	UBUS_METHOD_NOARG("config", roamd_config),
@@ -810,6 +825,7 @@ static const struct ubus_method roamd_methods[] = {
 	UBUS_METHOD_NOARG("mesh_neighbors", roamd_mesh_neighbors),
 	UBUS_METHOD_NOARG("mesh_log", roamd_mesh_log),
 	UBUS_METHOD("mesh_log_ingest", roamd_mesh_log_ingest, ingest_policy),
+	UBUS_METHOD_NOARG("tune", roamd_tune),
 };
 
 static struct ubus_object_type roamd_type =

@@ -1403,3 +1403,45 @@ msgstr "Настройки 802.11r различаются"
 
 msgid "Neighbor report unavailable"
 msgstr "Отчёт о соседях недоступен"
+
+msgid "Tune from the transition log"
+msgstr "Подобрать по журналу переходов"
+
+msgid "Set the weak-signal level and the signal margins from moves in the transition log. This runs once, when you press the button, and does not disconnect anyone."
+msgstr "По журналу переходов выставить уровень слабого сигнала и требуемый запас. Кнопка срабатывает один раз и никого не отключает."
+
+msgid "Tune"
+msgstr "Подобрать"
+
+msgid "Roaming thresholds"
+msgstr "Пороги роуминга"
+
+msgid "Nothing was changed. The transition log does not yet show enough finished moves."
+msgstr "Ничего не изменено. В журнале переходов пока мало завершённых переходов."
+
+msgid "Nothing was changed. The saved values already match the transition log."
+msgstr "Ничего не изменено. Сохранённые значения уже соответствуют журналу переходов."
+
+msgid "Handoffs can start earlier: a neighbour keeps clients and the moves stay put, so the weak-signal level and the required margin were relaxed."
+msgstr "Переход можно начинать раньше: сосед удерживает клиентов, переходы закрепляются, поэтому уровень слабого сигнала и требуемый запас ослаблены."
+
+msgid "Clients bounce between the same places, so a handoff now waits for a weaker signal and a larger margin."
+msgstr "Клиенты мечутся между одними и теми же местами, поэтому переход теперь ждёт более слабого сигнала и большего запаса."
+
+msgid "Some places keep clients and others bounce, so the margins were moved separately."
+msgstr "Где-то клиенты остаются, а где-то мечутся, поэтому запасы сдвинуты по отдельности."
+
+msgid "Moves %d, stays %d, failed requests %d, bounces %d."
+msgstr "Переходов: %d, удержаний: %d, неудачных запросов: %d, метаний: %d."
+
+msgid "Weak signal: %d dBm → %d dBm"
+msgstr "Слабый сигнал: %d дБм → %d дБм"
+
+msgid "Device difference: %d dB → %d dB"
+msgstr "Разница между устройствами: %d дБ → %d дБ"
+
+msgid "Band difference: %d dB → %d dB"
+msgstr "Разница между диапазонами: %d дБ → %d дБ"
+
+msgid "The transition log could not be read."
+msgstr "Не удалось прочитать журнал переходов."
