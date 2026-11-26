@@ -2907,7 +2907,7 @@ function memberCard(m, state) {
 	if (m.seg_issue)
 		pills.push(E('span', { 'class': 'roamd-pill roamd-pill-warn' }, m.seg_issue));
 
-	return E('article', { 'class': 'roamd-card' + (online ? '' : ' roamd-card-off') }, [
+	return E('article', { 'class': 'roamd-card roamd-node-card' + (online ? '' : ' roamd-card-off') }, [
 		E('div', { 'class': 'roamd-card-head' }, [
 			E('div', { 'class': 'roamd-card-id' }, [
 				nameCell(m),
@@ -3083,7 +3083,7 @@ function controllerCard(state) {
 		'click': function() { controllerDialog(state); }
 	}, readOnly ? _('Details') : _('Settings'));
 
-	return E('article', { 'class': 'roamd-card roamd-card-controller' }, [
+	return E('article', { 'class': 'roamd-card roamd-node-card roamd-card-controller' }, [
 		E('div', { 'class': 'roamd-card-head' }, [
 			E('div', { 'class': 'roamd-card-id' }, [
 				E('div', { 'class': 'roamd-title' }, name),
@@ -3098,8 +3098,6 @@ function controllerCard(state) {
 			[ _('Client count'), clientCountLink('controller', state.controller_clients) ],
 			[ _('Throughput'), throughputValue(self, true) ],
 			[ _('Uptime'), self.uptime ? '%t'.format(self.uptime) : '—' ],
-			[ _('Via'), '—' ],
-			[ _('Connection'), '—' ],
 			[ _('Roaming'), controllerRoamingValue(state.controller_roaming) ]
 		]),
 		E('div', { 'class': 'roamd-card-actions' }, check)
