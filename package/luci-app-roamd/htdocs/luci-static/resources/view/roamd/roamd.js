@@ -207,9 +207,9 @@ function clientBlock(mac, client, iface) {
 	var label = common.clientLabel(hostHints, common.deviceOverrides(), mac);
 	var extra = E('div', { 'class': 'roamd-row-extra', 'style': 'display:none' });
 	var lines = [
-		'802.11v %s'.format(client.btm ? _('yes') : _('no')),
-		'802.11k %s'.format(client.rrm ? _('yes') : _('no')),
-		'%s %d'.format(_('Steering attempts'), client.steer_count || 0)
+		E('div', {}, '802.11v %s'.format(client.btm ? _('yes') : _('no'))),
+		E('div', {}, '802.11k %s'.format(client.rrm ? _('yes') : _('no'))),
+		E('div', {}, '%s %d'.format(_('Steering attempts'), client.steer_count || 0))
 	];
 
 	for (var b in bands)
