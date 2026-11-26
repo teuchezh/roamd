@@ -1469,3 +1469,12 @@ msgstr "Загрузка устройств…"
 
 msgid "Clients could not be loaded"
 msgstr "Не удалось загрузить устройства"
+
+msgid "Zoom in"
+msgstr "Приблизить"
+
+msgid "Zoom out"
+msgstr "Отдалить"
+
+msgid "Show all"
+msgstr "Вместить"

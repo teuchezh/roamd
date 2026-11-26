@@ -121,7 +121,7 @@ function tuneFromLog() {
 		if (rows.length)
 			body.push(E('ul', {}, rows));
 
-		ui.showModal(_('Roaming thresholds'), [
+		common.showModal(_('Roaming thresholds'), [
 			E('div', {}, body),
 			E('div', { 'class': 'right' }, [
 				E('button', {
@@ -236,12 +236,21 @@ function clientBlock(mac, client, iface) {
 			E('div', { 'class': 'roamd-row-main' },
 				common.macCell(label, mac)),
 			E('span', {}, common.bandLabel(iface.band)),
-			common.dbmText(client.signal, { serving: true }),
-			E('span', { 'class': 'roamd-muted' }, '%t'.format(client.connected || 0))
+			E('span', { 'class': 'roamd-client-signal', 'title': _('Signal') }, [
+				E('span', { 'class': 'roamd-signal-bars', 'aria-hidden': 'true' },
+					[ 0, 1, 2, 3 ].map(function(level) {
+						var signal = common.signed(client.signal);
+						return E('i', { 'class': signal && signal >= -85 + level * 10 ? 'is-on' : '' });
+					})),
+				common.dbmText(client.signal, { serving: true })
+			]),
+			E('span', { 'class': 'roamd-muted', 'title': _('Uptime') }, '%t'.format(client.connected || 0))
 		].concat(E('button', {
 			'class': 'btn cbi-button',
+			'aria-expanded': 'false',
 			'click': function() {
 				extra.style.display = extra.style.display ? '' : 'none';
+				this.setAttribute('aria-expanded', extra.style.display === '' ? 'true' : 'false');
 			}
 		}, _('Details')))),
 		extra
@@ -269,13 +278,17 @@ function ifaceCard(name, iface) {
 	for (var mac in cmap)
 		clients.push(clientBlock(mac, cmap[mac], iface));
 
-	return E('article', { 'class': 'roamd-card' + (iface.active ? '' : ' roamd-card-off') }, [
+	return E('article', { 'class': 'roamd-card roamd-radio-card' + (iface.active ? '' : ' roamd-card-off') }, [
 		E('div', { 'class': 'roamd-card-head' }, [
 			E('div', { 'class': 'roamd-card-id' }, [
 				E('div', { 'class': 'roamd-title' }, iface.band
 					? '%s · %s %s'.format(common.bandLabel(iface.band), _('Channel'), iface.channel || '—')
 					: (iface.ssid || name)),
-				E('div', { 'class': 'roamd-sub' }, iface.ssid ? '%s · %s'.format(iface.ssid, name) : name)
+				E('div', { 'class': 'roamd-sub', 'title': name }, [
+					iface.ssid || name,
+					' · ',
+					'%s %s'.format(clients.length, _('Clients'))
+				])
 			]),
 			E('span', {
 				'class': iface.active ? 'roamd-state roamd-state-ok' : 'roamd-state roamd-state-off'
@@ -298,7 +311,7 @@ function renderBoard() {
 	for (var name in ifaces)
 		names.push(name);
 
-	return E('div', {}, [
+	return E('div', { 'class': 'roamd-overview' }, [
 		renderSummary(),
 		E('h3', {}, _('Wireless interfaces')),
 		names.length
@@ -508,7 +521,7 @@ function applyWizard(probe, ssid, encryption, key) {
 }
 
 function showUnsupported(probe) {
-	ui.showModal(_('Roaming network wizard'), [
+	common.showModal(_('Roaming network wizard'), [
 		E('p', { 'class': 'alert-message warning' }, probeMessage(probe.reason)),
 		E('p', {}, _('Nothing has been changed.')),
 		E('div', { 'class': 'right' }, [
@@ -590,12 +603,12 @@ function showWizard(probe) {
 			return;
 		}
 
-		ui.showModal(_('Roaming network wizard'), [
+		common.showModal(_('Roaming network wizard'), [
 			E('p', { 'class': 'spinning' }, _('Creating the network…'))
 		]);
 
 		applyWizard(check, ssid, encryption, key).catch(function (err) {
-			ui.showModal(_('Roaming network wizard'), [
+			common.showModal(_('Roaming network wizard'), [
 				E('p', { 'class': 'alert-message danger' }, '%h'.format(err)),
 				E('div', { 'class': 'right' }, [
 					E('button', { 'class': 'btn cbi-button', 'click': ui.hideModal }, _('Close'))
@@ -604,7 +617,7 @@ function showWizard(probe) {
 		});
 	}
 
-	ui.showModal(_('Roaming network wizard'), [
+	common.showModal(_('Roaming network wizard'), [
 		E('p', {}, _('Creates one network on every band with the same name and password, and turns roaming on. Channel, width and other details can be adjusted later under Network → Wireless.')),
 		E('p', {}, _('Radios that will be used:')),
 		E('ul', {}, summary),
@@ -901,6 +914,7 @@ return view.extend({
 
 		if (!common.isNode(meshState))
 			return m.render().then(function (node) {
+				node.classList.add('roamd-ui');
 				node.addEventListener('cbi-tab-active', toggleActions, true);
 				return node;
 			});
@@ -909,7 +923,7 @@ return view.extend({
 		this.handleReset = null;
 
 		return m.render().then(function (form) {
-			return E('div', {}, [ common.controlBanner(meshState), form ]);
+			return E('div', { 'class': 'roamd-ui' }, [ common.controlBanner(meshState), form ]);
 		});
 	}
 });

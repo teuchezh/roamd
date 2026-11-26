@@ -2,6 +2,7 @@
 'require baseclass';
 'require rpc';
 'require uci';
+'require ui';
 
 var callMeshStatus = rpc.declare({
 	object: 'roamd',
@@ -120,14 +121,25 @@ function signed(value) {
 }
 
 function ensureStyle() {
-	if (typeof document == 'undefined' || document.getElementById('roamd-style'))
+	var href, link;
+
+	if (typeof document == 'undefined')
 		return;
 
-	document.querySelector('head').appendChild(E('link', {
-		'id': 'roamd-style',
-		'rel': 'stylesheet',
-		'href': L.resource('view/roamd/roamd.css')
-	}));
+	href = L.resource('view/roamd/roamd.css') + '?v=1.4.0';
+	link = document.getElementById('roamd-style');
+
+	if (!link) {
+		document.querySelector('head').appendChild(E('link', {
+			'id': 'roamd-style',
+			'rel': 'stylesheet',
+			'href': href
+		}));
+		return;
+	}
+
+	if (link.getAttribute('href') !== href)
+		link.setAttribute('href', href);
 }
 
 function facts(rows) {
@@ -183,6 +195,12 @@ function bandKind(band) {
 }
 
 return baseclass.extend({
+	showModal: function(title, children) {
+		var modal = ui.showModal(title, children);
+		modal.classList.add('roamd-ui', 'roamd-dialog');
+		return modal;
+	},
+
 	meshStatus: callMeshStatus,
 	note: note,
 	twoLine: twoLine,
