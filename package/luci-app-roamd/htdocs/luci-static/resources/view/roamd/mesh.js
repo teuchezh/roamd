@@ -1009,24 +1009,28 @@ function mapClientStatus() {
 
 /* mapgeom-start */
 var MAP_THEME = {
-	bg: '#16181d',
-	star: '#e04e5d',
-	starStroke: '#4a1820',
-	node: '#4ea3e0',
-	nodeStroke: '#143044',
-	client: '#97b552',
-	clientStroke: '#243012',
-	unknown: '#e0a15a',
-	off: '#8a93a0',
-	cable: '#9aa7b8',
-	radio: '#e0a15a',
-	label: '#f4f6f8',
-	mac: '#b7bdc7',
-	metric: '#c5cad3',
-	metricRadio: '#f0c48a',
-	haloC: 'rgba(224,78,93,0.30)',
-	haloN: 'rgba(78,163,224,0.24)',
-	haloK: 'rgba(151,181,82,0.22)'
+	bg: 'var(--roamd-map-bg, #16181d)',
+	grid: 'var(--roamd-map-grid, #353c47)',
+	star: 'var(--roamd-map-star, #e04e5d)',
+	starStroke: 'var(--roamd-map-starstroke, #4a1820)',
+	node: 'var(--roamd-map-node, #4ea3e0)',
+	nodeStroke: 'var(--roamd-map-nodestroke, #143044)',
+	client: 'var(--roamd-map-client, #97b552)',
+	clientStroke: 'var(--roamd-map-clientstroke, #243012)',
+	unknown: 'var(--roamd-map-unknown, #e0a15a)',
+	off: 'var(--roamd-map-off, #8a93a0)',
+	cable: 'var(--roamd-map-cable, #9aa7b8)',
+	radio: 'var(--roamd-map-radio, #e0a15a)',
+	label: 'var(--roamd-map-label, #f4f6f8)',
+	mac: 'var(--roamd-map-mac, #b7bdc7)',
+	metric: 'var(--roamd-map-metric, #c5cad3)',
+	metricRadio: 'var(--roamd-map-metricradio, #f0c48a)',
+	speed: 'var(--roamd-map-speed, #d7e4f5)',
+	legend: 'var(--roamd-map-legend, #d5d8de)',
+	dot: 'var(--roamd-map-dot, #f7f4ea)',
+	haloC: 'var(--roamd-map-haloc, rgba(224,78,93,0.30))',
+	haloN: 'var(--roamd-map-halon, rgba(78,163,224,0.24))',
+	haloK: 'var(--roamd-map-halok, rgba(151,181,82,0.22))'
 };
 
 function mapGeomHypot(x, y) {
@@ -2044,7 +2048,7 @@ function mapLegend() {
 	}
 
 	return E('div', {
-		'style': 'position:absolute;top:10px;left:14px;z-index:2;display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;color:#d5d8de;font-size:13px;pointer-events:none'
+		'style': 'position:absolute;top:10px;left:14px;z-index:2;display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;color:' + MAP_THEME.legend + ';font-size:13px;pointer-events:none'
 	}, [
 		sample(false, _('Cable')),
 		sample(true, _('Radio'))
@@ -2392,7 +2396,7 @@ function mapPaint(scene, extras) {
 		if (edge.metricKind === 'dbm')
 			textFill = MAP_THEME.metricRadio;
 		else if (edge.metricKind === 'speed')
-			textFill = '#d7e4f5';
+			textFill = MAP_THEME.speed;
 
 		group.appendChild(svgEl('line', line));
 
@@ -2411,7 +2415,7 @@ function mapPaint(scene, extras) {
 		if (edge.active && motion) {
 			var dot = svgEl('circle', {
 				r: 2.5,
-				fill: '#f7f4ea',
+				fill: MAP_THEME.dot,
 				stroke: 'none',
 				'pointer-events': 'none'
 			});
@@ -2743,7 +2747,7 @@ function renderMeshMap(state, chrome) {
 
 	stage = E('div', {
 		'class': 'roamd-map-stage',
-		'style': 'position:relative;height:clamp(22rem, 76vh, 58rem);background-color:' + MAP_THEME.bg + ';background-image:radial-gradient(#353c47 1px, transparent 1px);background-size:24px 24px;overflow:hidden;touch-action:none;cursor:grab;user-select:none'
+		'style': 'position:relative;height:clamp(22rem, 76vh, 58rem);background-color:' + MAP_THEME.bg + ';background-image:radial-gradient(' + MAP_THEME.grid + ' 1px, transparent 1px);background-size:24px 24px;overflow:hidden;touch-action:none;cursor:grab;user-select:none'
 	}, [
 		mapLegend(),
 		mapPaint(scene, extras)
@@ -2784,7 +2788,32 @@ function mapClientParts(c, hints, ov) {
 }
 
 function mapOverlayCss() {
-	return '' +
+	var light = '' +
+		'--roamd-map-bg:#f6f8fc;' +
+		'--roamd-map-grid:#ccd5e3;' +
+		'--roamd-map-star:#be3549;' +
+		'--roamd-map-starstroke:#7b1d31;' +
+		'--roamd-map-node:#2474b2;' +
+		'--roamd-map-nodestroke:#174872;' +
+		'--roamd-map-client:#548025;' +
+		'--roamd-map-clientstroke:#335215;' +
+		'--roamd-map-unknown:#a76118;' +
+		'--roamd-map-off:#64748b;' +
+		'--roamd-map-cable:#536880;' +
+		'--roamd-map-radio:#a15a16;' +
+		'--roamd-map-label:#172439;' +
+		'--roamd-map-mac:#465870;' +
+		'--roamd-map-metric:#465870;' +
+		'--roamd-map-metricradio:#805019;' +
+		'--roamd-map-speed:#245476;' +
+		'--roamd-map-legend:#34465d;' +
+		'--roamd-map-dot:#172439;' +
+		'--roamd-map-haloc:rgba(190,53,73,0.16);' +
+		'--roamd-map-halon:rgba(36,116,178,0.16);' +
+		'--roamd-map-halok:rgba(84,128,37,0.14);';
+
+	return ':root[data-darkmode="false"] .roamd-map-stage{' + light + '}' +
+		'@media (prefers-color-scheme: light){:root:not([data-darkmode]) .roamd-map-stage{' + light + '}}' +
 		'.roamd-map-world .roamd-map-muted{opacity:.32}' +
 		'.roamd-map-highlight>line{stroke-width:2.6px}' +
 		'.roamd-map-world:not(.roamd-map-detail) .roamd-map-secondary{opacity:0;pointer-events:none}' +
