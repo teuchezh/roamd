@@ -19,7 +19,7 @@ var meshViewState = null;
 var mapCam = { x: 0, y: 0, k: 1, sig: null, user: false, w: 0, h: 0 };
 var mapBindSeq = 0;
 var mapObserver = null;
-var mapLive = { macs: {}, bytes: {} };
+var mapLive = { macs: {}, bytes: {}, rates: {} };
 
 function locationHash() {
 	try {
@@ -1928,14 +1928,13 @@ function mapBridgeSpeed(src) {
 	return parts.join(' ') + ' ' + _('Mbit/s');
 }
 
-/* iwinfo PHY rate, kbit/s. Idle clients still report it; it is not a traffic counter. */
-function mapPhySpeed(rate) {
-	var n = Number(rate);
+function mapClientSpeed(mac) {
+	var rate = mapLive.rates[String(mac || '').toLowerCase()];
 
-	if (!isFinite(n) || n <= 0)
+	if (!rate)
 		return '';
 
-	return '%d %s'.format(Math.round(n / 1000), _('Mbit/s'));
+	return '↓%s ↑%s %s'.format(formatMbps(rate.rx), formatMbps(rate.tx), _('Mbit/s'));
 }
 
 function mapBridgeActive(src) {
@@ -1948,37 +1947,48 @@ function mapBridgeActive(src) {
 function noteClientTraffic(cache) {
 	var bytes = {};
 	var macs = {};
-	var previousMacs = mapLive.macs;
+	var rates = {};
+	var now = performance.now();
+	var previousRates = JSON.stringify(mapLive.rates);
 
 	cache.clients.forEach(function(c) {
-		var key, rx, tx, prev;
+		var key, rx, tx, prev, elapsed, source;
 
-		if (!c || !c.mac)
+		if (!c || !c.mac || c.state === 'offline' ||
+		    c.rx_bytes == null || c.tx_bytes == null)
 			return;
 
 		key = String(c.mac).toLowerCase();
 		rx = Number(c.rx_bytes);
 		tx = Number(c.tx_bytes);
 
-		if (!isFinite(rx))
-			rx = 0;
+		if (!isFinite(rx) || !isFinite(tx) || rx < 0 || tx < 0)
+			return;
 
-		if (!isFinite(tx))
-			tx = 0;
-
+		source = [ c.node || 'controller', c.band || '', !!c.wired ].join('/');
 		prev = mapLive.bytes[key];
+		elapsed = prev ? (now - prev.time) / 1000 : 0;
+		bytes[key] = { rx: rx, tx: tx, time: now, source: source };
 
-		if (prev && (rx > prev.rx || tx > prev.tx))
+		// Rebaseline after roaming, counter resets or a long polling gap.
+		if (!prev || prev.source !== source || elapsed <= 0 || elapsed > 30 ||
+		    rx < prev.rx || tx < prev.tx)
+			return;
+
+		rates[key] = {
+			rx: (rx - prev.rx) * 8 / elapsed / 1000,
+			tx: (tx - prev.tx) * 8 / elapsed / 1000
+		};
+
+		if (rx > prev.rx || tx > prev.tx)
 			macs[key] = true;
-
-		bytes[key] = { rx: rx, tx: tx };
 	});
 
 	mapLive.bytes = bytes;
 	mapLive.macs = macs;
+	mapLive.rates = rates;
 
-	return Object.keys(previousMacs).length !== Object.keys(macs).length ||
-		Object.keys(macs).some(function(mac) { return !previousMacs[mac]; });
+	return previousRates !== JSON.stringify(rates);
 }
 
 function mapRecentMotion(state) {
@@ -2677,7 +2687,7 @@ function renderMeshMap(state, chrome) {
 				var parts = mapClientParts(c, hints, ov);
 				var link = c.wired ? 'wired' : 'wifi';
 				var dbm = link === 'wifi' ? mapClientRssi(c) : null;
-				var speed = link === 'wifi' ? mapPhySpeed(c.rate) : '';
+				var speed = mapClientSpeed(c.mac);
 				var parent = known[pid] ? pid : 'controller';
 				var macKey = String(c.mac || '').toLowerCase();
 				var id = 'c:' + macKey;
