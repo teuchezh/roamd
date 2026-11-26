@@ -973,7 +973,7 @@ function nodesViewSwitch() {
 		'role': 'radiogroup',
 		'aria-label': _('View')
 	}, [
-		option('cards', _('Cards')),
+		option('cards', _('Dashboard')),
 		option('map', _('Map'))
 	]);
 }

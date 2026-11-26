@@ -1446,7 +1446,7 @@ msgstr "Разница между диапазонами: %d дБ → %d дБ"
 msgid "The transition log could not be read."
 msgstr "Не удалось прочитать журнал переходов."
 
-msgid "Cards"
+msgid "Dashboard"
 msgstr "Панель"
 
 msgid "Map"
