@@ -955,7 +955,7 @@ function controllerCard(state) {
 			[ _('Uptime'), self.uptime ? '%t'.format(self.uptime) : '—' ],
 			[ _('Via'), '—' ],
 			[ _('Connection'), '—' ],
-			[ _('Roaming'), '—' ]
+			[ _('Roaming'), controllerRoamingValue(state.controller_roaming) ]
 		]),
 		E('div', { 'class': 'roamd-card-actions' }, check)
 	]);
