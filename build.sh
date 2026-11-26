@@ -108,15 +108,20 @@ prepare_feeds() {
 	if [ -d "$CACHE/base" ]; then
 		for entry in "$CACHE"/*; do
 			name=$(basename "$entry")
-			[ -e "$dir/feeds/$name" ] || cp -al "$entry" "$dir/feeds/$name"
+			[ -d "$entry" ] || continue
+			[ -e "$dir/feeds/$name" ] || cp -a "$entry" "$dir/feeds/$name"
 		done
 	fi
 
-	if [ ! -d "$dir/package/feeds/luci/luci-base" ] || [ ! -d "$dir/package/feeds/base/uclient" ]; then
-		( cd "$dir" && ./scripts/feeds update base luci >/dev/null 2>&1 )
-		( cd "$dir" && ./scripts/feeds install -a -p luci >/dev/null 2>&1 )
-		( cd "$dir" && ./scripts/feeds install -p base libubox libubus libuci ucode uclient ustream-ssl >/dev/null 2>&1 )
+
+	# Feed indexes point into *.tmp, which is regenerated for each SDK.
+	if [ -d "$dir/feeds/base" ] && [ -d "$dir/feeds/luci" ]; then
+		( cd "$dir" && ./scripts/feeds update -i base luci ) >>"$dir/build.log" 2>&1 || return 1
+	else
+		( cd "$dir" && ./scripts/feeds update base luci ) >>"$dir/build.log" 2>&1 || return 1
 	fi
+	( cd "$dir" && ./scripts/feeds install -a -p luci ) >>"$dir/build.log" 2>&1 || return 1
+	( cd "$dir" && ./scripts/feeds install -p base libubox libubus libuci ucode uclient ustream-ssl ) >>"$dir/build.log" 2>&1 || return 1
 
 	for name in base luci; do
 		if [ ! -d "$dir/feeds/$name" ] || [ ! -f "$dir/feeds/$name.index" ]; then
@@ -127,8 +132,8 @@ prepare_feeds() {
 
 	if [ ! -d "$CACHE/base" ]; then
 		mkdir -p "$CACHE"
-		for name in base base.index base.targetindex luci luci.index luci.targetindex; do
-			[ -e "$dir/feeds/$name" ] && cp -al "$dir/feeds/$name" "$CACHE/$name"
+		for name in base luci; do
+			[ -e "$dir/feeds/$name" ] && cp -a "$dir/feeds/$name" "$CACHE/$name"
 		done
 	fi
 }
