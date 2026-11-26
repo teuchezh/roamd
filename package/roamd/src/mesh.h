@@ -442,6 +442,7 @@ void mesh_log_local(const char *mac, uint8_t from_band, uint8_t to_band, const c
 		    enum mesh_event_type type);
 void mesh_log_push(const struct mesh_event *ev);
 void mesh_log_dump(struct blob_buf *b, unsigned int limit);
+void mesh_log_foreach(void (*cb)(const struct mesh_event *ev, void *priv), void *priv);
 void mesh_log_ingest(const char *id, const char *node, struct blob_attr *events);
 void mesh_log_forget(const char *id);
 void mesh_log_load(void);

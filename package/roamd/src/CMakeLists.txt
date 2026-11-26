@@ -33,6 +33,8 @@ set(SOURCES
 	mesh_bridge.c
 	mesh_clients.c
 	mesh_log.c
+	tune.c
+	tune_apply.c
 	ubus_api.c
 	apk.c
 	sha256.c
