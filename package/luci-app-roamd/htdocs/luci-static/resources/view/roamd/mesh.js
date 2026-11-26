@@ -17,6 +17,8 @@ var mapClientCache = null;
 var mapClientSeq = 0;
 var meshViewState = null;
 var mapCam = { x: 0, y: 0, k: 1, sig: null, user: false, w: 0, h: 0 };
+var mapPositions = {};
+var mapDragging = false;
 var mapBindSeq = 0;
 var mapObserver = null;
 var mapLive = { macs: {}, bytes: {}, rates: {} };
@@ -2103,6 +2105,33 @@ function bindMapStage(overlay) {
 	var svg = overlay.querySelector('.roamd-map-svg');
 	var world = overlay.querySelector('.roamd-map-world');
 	var bounds = overlay._bounds;
+	var scene = overlay._scene;
+	var frames = 0;
+	var animation = null;
+
+	function paint() {
+		var next = mapPaint(scene, overlay._extras);
+		svg.replaceWith(next);
+		svg = next;
+		world = svg.querySelector('.roamd-map-world');
+		bounds = scene.bounds;
+		size();
+	}
+
+	function tick() {
+		animation = null;
+		if (!overlay.isConnected || frames-- <= 0)
+			return;
+		mapFloatStep(scene);
+		paint();
+		animation = requestAnimationFrame(tick);
+	}
+
+	function restart() {
+		frames = mapReduceMotion() ? 1 : 90;
+		if (animation === null)
+			animation = requestAnimationFrame(tick);
+	}
 	var ptr = null;
 
 	if (!stage || !svg || !world)
@@ -2188,7 +2217,12 @@ function bindMapStage(overlay) {
 		if (ev.button != null && ev.button !== 0)
 			return;
 
+		var key = nodeKey(ev.target);
+		var node = scene.byId[key];
 		ptr = {
+			node: node,
+			nx: node ? node.x : 0,
+			ny: node ? node.y : 0,
 			id: ev.pointerId,
 			x: ev.clientX,
 			y: ev.clientY,
@@ -2218,6 +2252,16 @@ function bindMapStage(overlay) {
 
 		ptr.moved = true;
 		mapCam.user = true;
+		if (ptr.node) {
+			mapDragging = true;
+			ptr.node.fixed = true;
+			ptr.node.x = ptr.nx + dx / mapCam.k;
+			ptr.node.y = ptr.ny + dy / mapCam.k;
+			mapFloatGeometry(scene);
+			paint();
+			restart();
+			return;
+		}
 		mapCam.x = ptr.ox + dx;
 		mapCam.y = ptr.oy + dy;
 		mapApplyCam(world);
@@ -2232,6 +2276,7 @@ function bindMapStage(overlay) {
 		key = ptr.key;
 		moved = ptr.moved;
 		ptr = null;
+		mapDragging = false;
 		stage.style.cursor = 'grab';
 
 		if (!moved && key && ev.type === 'pointerup')
@@ -2285,12 +2330,116 @@ function bindMapStage(overlay) {
 		mapObserver.observe(stage);
 	}
 
+	if (overlay._newTopology)
+		restart();
+
 	if (size()) {
 		if (!mapCam.user)
 			fit();
 		else
 			mapApplyCam(world);
 	}
+}
+
+function mapFloatScene(scene) {
+	var byId = {};
+	scene.nodes.forEach(function(node) {
+		var saved = mapPositions[node.id];
+		node.labelOffset = node.label ? {
+			x: node.label.x - node.x, y: node.label.y - node.y
+		} : null;
+		if (saved) {
+			node.x = saved.x;
+			node.y = saved.y;
+			node.fixed = saved.fixed;
+		}
+		node.vx = 0;
+		node.vy = 0;
+		byId[node.id] = node;
+	});
+	scene.byId = byId;
+	mapFloatGeometry(scene);
+}
+
+function mapFloatGeometry(scene) {
+	scene.nodes.forEach(function(node) {
+		if (node.label && node.labelOffset) {
+			var x = node.x + node.labelOffset.x;
+			var y = node.y + node.labelOffset.y;
+			var dx = x - node.label.x, dy = y - node.label.y;
+			node.label.x = x;
+			node.label.y = y;
+			node.label.x0 += dx;
+			node.label.x1 += dx;
+			node.label.y0 += dy;
+			node.label.y1 += dy;
+		}
+		mapPositions[node.id] = { x: node.x, y: node.y, fixed: !!node.fixed };
+	});
+	scene.edges.forEach(function(edge) {
+		var from = scene.byId[edge.from], to = scene.byId[edge.to];
+		var dx = to.x - from.x, dy = to.y - from.y;
+		var distance = Math.sqrt(dx * dx + dy * dy) || 1;
+		edge.x1 = from.x + dx / distance * (from.r + 3);
+		edge.y1 = from.y + dy / distance * (from.r + 3);
+		edge.x2 = to.x - dx / distance * (to.r + 4);
+		edge.y2 = to.y - dy / distance * (to.r + 4);
+		edge.lx = (edge.x1 + edge.x2) / 2 - dy / distance * 12;
+		edge.ly = (edge.y1 + edge.y2) / 2 + dx / distance * 12;
+	});
+	var xs = [], ys = [];
+	scene.nodes.forEach(function(node) {
+		xs.push(node.x - 30, node.x + 30);
+		ys.push(node.y - 30, node.y + 30);
+		if (node.label) {
+			xs.push(node.label.x0, node.label.x1);
+			ys.push(node.label.y0, node.label.y1);
+		}
+	});
+	if (xs.length)
+		scene.bounds = { x0: Math.min.apply(null, xs), x1: Math.max.apply(null, xs),
+			y0: Math.min.apply(null, ys), y1: Math.max.apply(null, ys) };
+}
+
+function mapFloatStep(scene) {
+	var nodes = scene.nodes;
+	nodes.forEach(function(node, i) {
+		for (var j = i + 1; j < nodes.length; j++) {
+			var other = nodes[j];
+			var dx = other.x - node.x, dy = other.y - node.y;
+			var distance = Math.sqrt(dx * dx + dy * dy);
+			if (distance < 1) { dx = 1; dy = 1; distance = Math.sqrt(2); }
+			var clearance = 85;
+			if (node.label && other.label)
+				clearance = Math.max(85, Math.min(200,
+					(node.label.x1 - node.label.x0 + other.label.x1 - other.label.x0) / 2 + 25));
+			var force = Math.min(12, 1800 / (distance * distance) +
+				Math.max(0, clearance - distance) * .08);
+			node.vx -= dx / distance * force;
+			node.vy -= dy / distance * force;
+			other.vx += dx / distance * force;
+			other.vy += dy / distance * force;
+		}
+	});
+	scene.edges.forEach(function(edge) {
+		var from = scene.byId[edge.from], to = scene.byId[edge.to];
+		var dx = to.x - from.x, dy = to.y - from.y;
+		var distance = Math.sqrt(dx * dx + dy * dy) || 1;
+		var force = (distance - (to.kind === 'client' ? 160 : 260)) * .012;
+		from.vx += dx / distance * force;
+		from.vy += dy / distance * force;
+		to.vx -= dx / distance * force;
+		to.vy -= dy / distance * force;
+	});
+	nodes.forEach(function(node) {
+		node.vx = (node.vx - node.x * .0008) * .72;
+		node.vy = (node.vy - node.y * .0008) * .72;
+		if (!node.fixed) {
+			node.x += node.vx;
+			node.y += node.vy;
+		}
+	});
+	mapFloatGeometry(scene);
 }
 
 function scheduleMapBind(overlay) {
@@ -2715,12 +2864,14 @@ function renderMeshMap(state, chrome) {
 	}
 
 	scene = mapGeomLayout(items);
+	mapFloatScene(scene);
 	sig = items.map(function(it) {
 		return [ it.id, it.parent, it.kind, it.name, it.mac, it.link ].join(':');
 	}).join('|');
 
 	if (mapCam.sig !== sig) {
 		mapCam.sig = sig;
+		scene.newTopology = true;
 		mapCam.user = false;
 	}
 
@@ -2752,6 +2903,12 @@ function renderMeshMap(state, chrome) {
 			if (live && live._fit)
 				live._fit();
 		}),
+		mapZoomButton(_('Reset layout'), _('Reset layout'), function() {
+			mapPositions = {};
+			mapCam.sig = null;
+			mapCam.user = false;
+			replaceNodes(meshViewState);
+		}),
 		chrome.addButton || ''
 	]);
 
@@ -2773,6 +2930,8 @@ function renderMeshMap(state, chrome) {
 		bar,
 		stage
 	]);
+	overlay._scene = scene;
+	overlay._newTopology = scene.newTopology;
 	overlay._bounds = scene.bounds;
 	overlay._extras = extras;
 	overlay._state = state;
@@ -3207,6 +3366,10 @@ function nameCell(m) {
 }
 
 function replaceNodes(state) {
+	if (mapDragging) {
+		meshViewState = state;
+		return;
+	}
 	var pane = document.getElementById('mesh-nodes-pane');
 	var focused = document.activeElement;
 	var key = pane && pane.contains(focused) && focused.getAttribute('data-key');

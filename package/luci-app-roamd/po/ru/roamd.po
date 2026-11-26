@@ -1478,3 +1478,6 @@ msgstr "Отдалить"
 
 msgid "Show all"
 msgstr "Вместить"
+
+msgid "Reset layout"
+msgstr "Сбросить расположение"
