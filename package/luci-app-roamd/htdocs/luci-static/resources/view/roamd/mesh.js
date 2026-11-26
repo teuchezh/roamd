@@ -11,6 +11,11 @@ var nodeUiOpen = false;
 var clientFocus = '';
 var meshActivate = function() {};
 var refreshClients = function() {};
+var nodesView = 'cards';
+var mapShowClients = true;
+var mapClientCache = null;
+var mapClientSeq = 0;
+var meshViewState = null;
 
 function locationHash() {
 	try {
@@ -617,6 +622,9 @@ function pollAcquire(task, body, misses, kind) {
 }
 
 function renderNodes(state) {
+	state = state || {};
+	meshViewState = state;
+
 	var deps = state.deps_ready ? '' : E('div', { 'class': 'alert-message warning' }, [
 		E('strong', {}, _('Preparing the controller is not finished')),
 		E('div', {}, state.deps_state || _('the required packages are not installed yet')),
@@ -682,7 +690,709 @@ function renderNodes(state) {
 			]),
 			addButton
 		]),
-		E('div', { 'class': 'roamd-grid' }, cards)
+		E('div', { 'class': 'roamd-viewbar' }, [
+			nodesViewSwitch(),
+			nodesView === 'map' ? mapClientSwitch() : '',
+			mapClientStatus()
+		]),
+		nodesView === 'map' ? renderMeshMap(state) : E('div', { 'class': 'roamd-grid' }, cards)
+	]);
+}
+
+/* Tree of parent links (member.via). Positions are not coordinates. */
+var MAP_NODE_W = 176;
+var MAP_NODE_H = 76;
+var MAP_GAP_X = 48;
+var MAP_GAP_Y = 64;
+var MAP_PAD = 28;
+var MAP_CHIP_H = 24;
+var MAP_CHIP_GAP = 6;
+var MAP_CHIP_W = 156;
+
+function mapChipCols(count) {
+	return count > 1 ? 2 : 1;
+}
+
+function mapBlock(count, showClients) {
+	var cols = showClients && count ? mapChipCols(count) : 1;
+	var rows = showClients && count ? Math.ceil(count / cols) : 0;
+	var inner = rows ? (cols * MAP_CHIP_W + (cols - 1) * MAP_CHIP_GAP) : 0;
+
+	return {
+		w: Math.max(MAP_NODE_W, inner + 16),
+		h: MAP_NODE_H + (rows ? (12 + rows * MAP_CHIP_H + (rows - 1) * MAP_CHIP_GAP) : 0),
+		cols: cols,
+		rows: rows
+	};
+}
+
+function layoutMesh(blocks, childIds, rootId, orphanIds) {
+	var seen = {};
+
+	function measure(id) {
+		if (!blocks[id])
+			return 0;
+
+		if (seen[id])
+			return blocks[id].span || blocks[id].w;
+
+		seen[id] = true;
+
+		var kids = childIds[id] || [];
+		var sum = 0;
+		var i;
+
+		for (i = 0; i < kids.length; i++) {
+			sum += measure(kids[i]);
+
+			if (i)
+				sum += MAP_GAP_X;
+		}
+
+		blocks[id].span = Math.max(blocks[id].w, sum || 0);
+		return blocks[id].span;
+	}
+
+	if (!blocks[rootId])
+		return { pos: {}, width: 280, height: 120, orphanLabelY: 0 };
+
+	measure(rootId);
+
+	var pos = {};
+	var placed = {};
+
+	function place(id, left, top) {
+		if (placed[id] || !blocks[id])
+			return;
+
+		placed[id] = true;
+
+		var b = blocks[id];
+		var kids = childIds[id] || [];
+		var sum = 0;
+		var i;
+
+		for (i = 0; i < kids.length; i++) {
+			sum += blocks[kids[i]].span || blocks[kids[i]].w;
+
+			if (i)
+				sum += MAP_GAP_X;
+		}
+
+		pos[id] = {
+			x: left + (b.span - b.w) / 2,
+			y: top,
+			w: b.w,
+			h: b.h
+		};
+
+		var cursor = left + (b.span - sum) / 2;
+		var childTop = top + b.h + MAP_GAP_Y;
+
+		for (i = 0; i < kids.length; i++) {
+			place(kids[i], cursor, childTop);
+			cursor += (blocks[kids[i]].span || blocks[kids[i]].w) + MAP_GAP_X;
+		}
+	}
+
+	place(rootId, MAP_PAD, MAP_PAD);
+
+	var bottom = MAP_PAD;
+	var right = MAP_PAD;
+	var id;
+
+	for (id in pos) {
+		bottom = Math.max(bottom, pos[id].y + pos[id].h);
+		right = Math.max(right, pos[id].x + pos[id].w);
+	}
+
+	var orphanLabelY = 0;
+
+	if (orphanIds.length) {
+		orphanLabelY = bottom + MAP_GAP_Y;
+
+		var cursor = MAP_PAD;
+		var top = orphanLabelY + 18;
+
+		orphanIds.forEach(function(oid) {
+			var b = blocks[oid];
+
+			if (!b)
+				return;
+
+			pos[oid] = { x: cursor, y: top, w: b.w, h: b.h };
+			cursor += b.w + MAP_GAP_X;
+			bottom = Math.max(bottom, top + b.h);
+			right = Math.max(right, pos[oid].x + b.w);
+		});
+	}
+
+	return {
+		pos: pos,
+		width: Math.ceil(Math.max(right + MAP_PAD, 280)),
+		height: Math.ceil(Math.max(bottom + MAP_PAD, 120)),
+		orphanLabelY: orphanLabelY
+	};
+}
+
+function parentCycle(id, parentId, parentOf) {
+	var seen = {};
+	var cur = parentId;
+
+	while (cur) {
+		if (cur === id || seen[cur])
+			return true;
+
+		seen[cur] = true;
+		cur = parentOf[cur];
+	}
+
+	return false;
+}
+
+function meshParentId(m, state) {
+	if (!m || !m.via)
+		return '';
+
+	if (m.via === 'controller' || bssidOwner(m.via, state.self_aps))
+		return 'controller';
+
+	var members = state.members || [];
+	var i;
+
+	for (i = 0; i < members.length; i++)
+		if (members[i].id !== m.id && bssidOwner(m.via, members[i].aps))
+			return members[i].id;
+
+	return '';
+}
+
+function meshMapGraph(state) {
+	var members = state.members || [];
+	var parentOf = {};
+	var children = { controller: [] };
+	var orphans = [];
+
+	members.forEach(function(m) {
+		if (!m || !m.id || m.id === 'controller')
+			return;
+
+		children[m.id] = children[m.id] || [];
+		parentOf[m.id] = meshParentId(m, state);
+	});
+
+	members.forEach(function(m) {
+		var p;
+
+		if (!m || !m.id || m.id === 'controller')
+			return;
+
+		p = parentOf[m.id];
+
+		if (p && children[p] && !parentCycle(m.id, p, parentOf))
+			children[p].push(m.id);
+		else
+			orphans.push(m.id);
+	});
+
+	return { children: children, orphans: orphans, parentOf: parentOf };
+}
+
+function meshLinkLabel(m) {
+	if (!m)
+		return '';
+
+	if (m.connection === 'wired')
+		return _('Cable');
+
+	if (m.connection !== 'wifi')
+		return '';
+
+	return m.uplink_band
+		? '%s · %s'.format(_('Radio'), common.bandLabel(m.uplink_band))
+		: _('Radio');
+}
+
+function mapCountText(n) {
+	return '%s: %s'.format(_('Client count'), String(n || 0));
+}
+
+function mapFit(text, max) {
+	text = String(text || '');
+
+	if (/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(text))
+		return text;
+
+	if (text.length <= max)
+		return text;
+
+	return text.slice(0, Math.max(1, max - 1)) + '\u2026';
+}
+
+function mapClientLabel(c, hints, ov) {
+	var named = '';
+
+	if (c && c.mac) {
+		try {
+			named = common.clientLabel(hints || {}, ov || {}, c.mac) || '';
+		} catch (e) {}
+	}
+
+	if (!named && c && c.host)
+		named = c.host;
+
+	return named || (c && c.mac) || '';
+}
+
+function mapClientSig(cache) {
+	if (!cache)
+		return '';
+
+	if (cache.failed)
+		return 'failed';
+
+	return (cache.clients || []).map(function(c) {
+		return [
+			String(c.mac || '').toLowerCase(),
+			c.node || '',
+			c.state || '',
+			c.wired ? '1' : '0',
+			mapClientLabel(c, cache.hints, cache.ov)
+		].join('\t');
+	}).join('\n');
+}
+
+function safeOverrides() {
+	try {
+		return common.deviceOverrides();
+	} catch (e) {
+		return {};
+	}
+}
+
+function mapClientsByNode(state) {
+	var cache = mapClientCache;
+	var by = {};
+	var service;
+
+	if (!cache || cache.failed)
+		return by;
+
+	service = serviceMacs(state.members);
+
+	(cache.clients || []).forEach(function(c) {
+		var id;
+
+		if (!c || !c.mac || !clientSeen(c) || service[String(c.mac).toLowerCase()])
+			return;
+
+		id = c.node || 'controller';
+		(by[id] || (by[id] = [])).push(c);
+	});
+
+	Object.keys(by).forEach(function(id) {
+		by[id].sort(function(a, b) {
+			var an = mapClientLabel(a, cache.hints, cache.ov);
+			var bn = mapClientLabel(b, cache.hints, cache.ov);
+			var am = an === a.mac ? 1 : 0;
+			var bm = bn === b.mac ? 1 : 0;
+
+			if (am !== bm)
+				return am - bm;
+
+			if (an === bn)
+				return 0;
+
+			return an < bn ? -1 : 1;
+		});
+	});
+
+	return by;
+}
+
+function ensureMapClients() {
+	var seq = ++mapClientSeq;
+
+	Promise.all([
+		callMeshClients().catch(function() { return null; }),
+		common.hostHints().catch(function() { return {}; }),
+		uci.load('roamd').catch(function() { return null; })
+	]).then(function(res) {
+		var next;
+		var list;
+
+		if (seq !== mapClientSeq)
+			return;
+
+		if (!res[0]) {
+			next = { clients: [], hints: {}, ov: {}, failed: true };
+		} else {
+			list = (res[0] && res[0].clients) || res[0] || [];
+
+			if (!Array.isArray(list))
+				list = [];
+
+			next = {
+				clients: list,
+				hints: res[1] || {},
+				ov: safeOverrides(),
+				failed: false
+			};
+		}
+
+		if (mapClientSig(next) === mapClientSig(mapClientCache))
+			return;
+
+		mapClientCache = next;
+
+		if (nodesView === 'map' && mapShowClients)
+			replaceNodes(meshViewState);
+	}, function() {
+		if (seq !== mapClientSeq)
+			return;
+
+		if (mapClientCache && mapClientCache.failed)
+			return;
+
+		mapClientCache = { clients: [], hints: {}, ov: {}, failed: true };
+
+		if (nodesView === 'map' && mapShowClients)
+			replaceNodes(meshViewState);
+	});
+}
+
+function nodesViewSwitch() {
+	function option(id, label) {
+		return E('label', { 'class': 'roamd-switch-opt' }, [
+			E('input', {
+				'type': 'radio',
+				'name': 'roamd-nodes-view',
+				'value': id,
+				'checked': nodesView === id ? 'checked' : null,
+				'change': function() {
+					if (nodesView === id)
+						return;
+
+					nodesView = id;
+					replaceNodes(meshViewState);
+				}
+			}),
+			E('span', {}, label)
+		]);
+	}
+
+	return E('div', {
+		'class': 'roamd-switch',
+		'role': 'radiogroup',
+		'aria-label': _('View')
+	}, [
+		option('cards', _('Cards')),
+		option('map', _('Map'))
+	]);
+}
+
+function mapClientSwitch() {
+	return E('label', { 'class': 'roamd-switch-check' }, [
+		E('input', {
+			'type': 'checkbox',
+			'checked': mapShowClients ? 'checked' : null,
+			'change': function(ev) {
+				mapShowClients = !!ev.target.checked;
+				replaceNodes(meshViewState);
+			}
+		}),
+		E('span', { 'class': 'roamd-switch-ui', 'aria-hidden': 'true' }),
+		E('span', {}, _('Show clients'))
+	]);
+}
+
+function mapClientStatus() {
+	if (nodesView !== 'map' || !mapShowClients)
+		return '';
+
+	if (!mapClientCache)
+		return E('span', { 'class': 'roamd-muted' }, _('Loading clients…'));
+
+	if (mapClientCache.failed)
+		return E('span', { 'class': 'roamd-muted' }, _('Clients could not be loaded'));
+
+	return '';
+}
+
+function svgEl(tag, attrs, children) {
+	var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+	var key;
+
+	attrs = attrs || {};
+
+	for (key in attrs)
+		if (attrs[key] != null && attrs[key] !== '')
+			el.setAttribute(key, String(attrs[key]));
+
+	(children || []).forEach(function(child) {
+		if (child == null || child === '')
+			return;
+
+		el.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+	});
+
+	return el;
+}
+
+function ri(n) {
+	return Math.round(n);
+}
+
+function mapEdge(svg, x1, y1, x2, y2, kind, label) {
+	var midX = (x1 + x2) / 2;
+	var midY = (y1 + y2) / 2;
+	var cls = 'roamd-map-edge' + (kind === 'wifi' ? ' roamd-map-edge-radio' : '');
+	var tw;
+
+	svg.appendChild(svgEl('path', {
+		'class': cls,
+		'd': 'M %d,%d C %d,%d %d,%d %d,%d'.format(ri(x1), ri(y1), ri(x1), ri(midY), ri(x2), ri(midY), ri(x2), ri(y2))
+	}));
+
+	if (!label)
+		return;
+
+	tw = Math.round(label.length * 6.8 + 12);
+	svg.appendChild(svgEl('rect', {
+		'class': 'roamd-map-edge-label-bg',
+		x: ri(midX - tw / 2),
+		y: ri(midY - 9),
+		width: tw,
+		height: 18,
+		rx: 3
+	}));
+	svg.appendChild(svgEl('text', {
+		'class': 'roamd-map-edge-label',
+		x: ri(midX),
+		y: ri(midY + 4),
+		'text-anchor': 'middle'
+	}, [ label ]));
+}
+
+function drawMapClients(g, item, box) {
+	var clients = item.clients || [];
+	var cols = mapChipCols(clients.length);
+	var inner = cols * MAP_CHIP_W + (cols - 1) * MAP_CHIP_GAP;
+	var startX = box.x + (box.w - inner) / 2;
+	var startY = box.y + MAP_NODE_H + 10;
+	var hints = (mapClientCache && mapClientCache.hints) || {};
+	var ov = (mapClientCache && mapClientCache.ov) || {};
+
+	clients.forEach(function(c, i) {
+		var col = i % cols;
+		var row = Math.floor(i / cols);
+		var x = startX + col * (MAP_CHIP_W + MAP_CHIP_GAP);
+		var y = startY + row * (MAP_CHIP_H + MAP_CHIP_GAP);
+		var name = mapClientLabel(c, hints, ov);
+		var chip = svgEl('g', {
+			'class': 'roamd-map-chip-hit' + (c.state === 'unknown' ? ' roamd-map-chip-unknown' : '')
+		});
+
+		chip.appendChild(svgEl('title', {}, [
+			name === c.mac ? c.mac : '%s (%s)'.format(name, c.mac)
+		]));
+		chip.appendChild(svgEl('rect', {
+			'class': 'roamd-map-chip',
+			x: ri(x),
+			y: ri(y),
+			width: MAP_CHIP_W,
+			height: MAP_CHIP_H,
+			rx: 4
+		}));
+		chip.appendChild(svgEl('circle', {
+			cx: ri(x + 11),
+			cy: ri(y + MAP_CHIP_H / 2),
+			r: 3.5,
+			'class': 'roamd-map-dot'
+		}));
+		chip.appendChild(svgEl('text', {
+			'class': 'roamd-map-chip-text',
+			x: ri(x + 20),
+			y: ri(y + 16)
+		}, [ mapFit(name, 18) ]));
+		chip.addEventListener('click', function(ev) {
+			ev.preventDefault();
+			ev.stopPropagation();
+			openClients(item.id);
+		});
+		g.appendChild(chip);
+	});
+}
+
+function drawMapNode(svg, item, box, state) {
+	var g = svgEl('g', {
+		'class': 'roamd-map-node' +
+			(item.kind === 'controller' ? ' roamd-map-node-controller' : '') +
+			(item.online ? '' : ' roamd-map-node-off')
+	});
+	var role = item.kind === 'controller' ? _('controller') : _('node');
+
+	g.appendChild(svgEl('title', {}, [ '%s, %s'.format(item.name, mapCountText(item.count)) ]));
+	g.appendChild(svgEl('rect', {
+		'class': 'roamd-map-box',
+		x: ri(box.x),
+		y: ri(box.y),
+		width: ri(box.w),
+		height: ri(box.h),
+		rx: 4
+	}));
+	g.appendChild(svgEl('text', {
+		'class': 'roamd-map-title',
+		x: ri(box.x + box.w / 2),
+		y: ri(box.y + 24),
+		'text-anchor': 'middle'
+	}, [ mapFit(item.name, Math.max(8, Math.floor((box.w - 24) / 8))) ]));
+	g.appendChild(svgEl('text', {
+		'class': 'roamd-map-sub',
+		x: ri(box.x + box.w / 2),
+		y: ri(box.y + 44),
+		'text-anchor': 'middle'
+	}, [
+		svgEl('tspan', {}, [ role + ' · ' ]),
+		svgEl('tspan', { 'class': item.online ? 'roamd-map-ok' : 'roamd-map-wait' }, [
+			item.online ? _('online') : _('offline')
+		])
+	]));
+	g.appendChild(svgEl('text', {
+		'class': 'roamd-map-count',
+		x: ri(box.x + box.w / 2),
+		y: ri(box.y + 64),
+		'text-anchor': 'middle'
+	}, [ mapCountText(item.count) ]));
+
+	if (item.clients && item.clients.length) {
+		g.appendChild(svgEl('line', {
+			'class': 'roamd-map-rule',
+			x1: ri(box.x + 12),
+			x2: ri(box.x + box.w - 12),
+			y1: ri(box.y + MAP_NODE_H),
+			y2: ri(box.y + MAP_NODE_H)
+		}));
+		drawMapClients(g, item, box);
+	}
+
+	if (item.kind === 'controller' || item.member) {
+		g.setAttribute('class', g.getAttribute('class') + ' roamd-map-node-btn');
+		g.addEventListener('click', function() {
+			if (item.kind === 'controller')
+				controllerDialog(state);
+			else
+				nodeDialog(item.member, state, refreshNodes);
+		});
+	}
+
+	svg.appendChild(g);
+}
+
+function renderMeshMap(state) {
+	var show = !!(mapShowClients && mapClientCache && !mapClientCache.failed);
+	var graph = meshMapGraph(state);
+	var byNode = show ? mapClientsByNode(state) : {};
+	var blocks = {};
+	var info = {};
+	var self = state.self || {};
+	var svg;
+	var layout;
+
+	if (mapShowClients)
+		ensureMapClients();
+
+	info.controller = {
+		id: 'controller',
+		name: state.controller_name || self.hostname || _('This device'),
+		kind: 'controller',
+		online: true,
+		count: state.controller_clients || 0,
+		clients: byNode.controller || []
+	};
+	blocks.controller = mapBlock(info.controller.clients.length, show);
+
+	(state.members || []).forEach(function(m) {
+		if (!m || !m.id || m.id === 'controller')
+			return;
+
+		info[m.id] = {
+			id: m.id,
+			name: m.name || m.hostname || m.id,
+			kind: 'node',
+			online: !!m.online,
+			count: m.client_count || 0,
+			clients: byNode[m.id] || [],
+			member: m
+		};
+		blocks[m.id] = mapBlock(info[m.id].clients.length, show);
+	});
+
+	if (show) {
+		Object.keys(byNode).forEach(function(id) {
+			if (blocks[id])
+				return;
+
+			info[id] = {
+				id: id,
+				name: id,
+				kind: 'node',
+				online: true,
+				count: byNode[id].length,
+				clients: byNode[id],
+				member: null
+			};
+			blocks[id] = mapBlock(byNode[id].length, true);
+			graph.orphans.push(id);
+		});
+	}
+
+	layout = layoutMesh(blocks, graph.children, 'controller', graph.orphans);
+	svg = svgEl('svg', {
+		'class': 'roamd-map-svg',
+		'width': layout.width,
+		'height': layout.height,
+		'viewBox': '0 0 %d %d'.format(layout.width, layout.height),
+		'role': 'img',
+		'aria-label': _('Map')
+	});
+
+	Object.keys(graph.children).forEach(function(pid) {
+		(graph.children[pid] || []).forEach(function(cid) {
+			var from = layout.pos[pid];
+			var to = layout.pos[cid];
+			var member = info[cid] && info[cid].member;
+			var kind = member && member.connection === 'wifi' ? 'wifi'
+				: (member && member.connection === 'wired' ? 'wired' : '');
+
+			if (!from || !to)
+				return;
+
+			mapEdge(svg,
+				from.x + from.w / 2, from.y + from.h,
+				to.x + to.w / 2, to.y,
+				kind, meshLinkLabel(member));
+		});
+	});
+
+	if (layout.orphanLabelY)
+		svg.appendChild(svgEl('text', {
+			'class': 'roamd-map-orphan',
+			x: MAP_PAD,
+			y: ri(layout.orphanLabelY + 12)
+		}, [ _('Parent unknown') ]));
+
+	Object.keys(layout.pos).forEach(function(id) {
+		if (info[id])
+			drawMapNode(svg, info[id], layout.pos[id], state);
+	});
+
+	return E('div', { 'class': 'roamd-map' }, [
+		E('div', { 'class': 'roamd-map-legend' }, [
+			E('span', { 'class': 'roamd-map-key roamd-map-key-cable' }, _('Cable')),
+			E('span', { 'class': 'roamd-map-key roamd-map-key-radio' }, _('Radio'))
+		]),
+		svg
 	]);
 }
 
@@ -1053,15 +1763,29 @@ function nameCell(m) {
 	return common.twoLine(E('div', {}, [ E('strong', {}, alias), link ]), sys);
 }
 
+function replaceNodes(state) {
+	var pane = document.getElementById('mesh-nodes-pane');
+	var map = pane && pane.querySelector('.roamd-map');
+	var scroll = map ? { left: map.scrollLeft, top: map.scrollTop } : null;
+
+	if (pane)
+		dom.content(pane, renderNodes(state || {}));
+
+	if (!scroll || !pane)
+		return;
+
+	map = pane.querySelector('.roamd-map');
+
+	if (map) {
+		map.scrollLeft = scroll.left;
+		map.scrollTop = scroll.top;
+	}
+}
+
 function refreshNodes() {
 	return meshStatusWithRoaming().then(function(fresh) {
-		var pane = document.getElementById('mesh-nodes-pane');
-
 		fresh = fresh || {};
-
-		if (pane)
-			dom.content(pane, renderNodes(fresh));
-
+		replaceNodes(fresh);
 		settingsSync(fresh);
 	});
 }
