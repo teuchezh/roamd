@@ -905,7 +905,7 @@ function ensureMapClients() {
 		common.hostHints().catch(function() { return {}; }),
 		uci.load('roamd').catch(function() { return null; })
 	]).then(function(res) {
-		var next, list, trafficChanged;
+		var next, list, trafficChanged, mapChanged;
 
 		if (seq !== mapClientSeq)
 			return;
@@ -927,12 +927,10 @@ function ensureMapClients() {
 		}
 
 		trafficChanged = noteClientTraffic(next);
-		if (!trafficChanged && mapClientCache && mapClientSig(next) === mapClientSig(mapClientCache))
-			return;
-
+		mapChanged = !mapClientCache || mapClientSig(next) !== mapClientSig(mapClientCache);
 		mapClientCache = next;
 
-		if (nodesView === 'map' && mapShowClients)
+		if ((trafficChanged || mapChanged) && nodesView === 'map' && mapShowClients)
 			replaceNodes(meshViewState);
 	}, function() {
 		if (seq !== mapClientSeq)
@@ -2234,8 +2232,17 @@ function bindMapStage(overlay) {
 			controllerDialog(overlay._state);
 		else if (extra.member)
 			nodeDialog(extra.member, overlay._state, refreshNodes);
-		else if (extra.client)
-			openClients(extra.parent || '');
+		else if (extra.kind === 'client' && mapClientCache) {
+			var cache = mapClientCache;
+			var client = cache.clients.find(function(c) {
+				return c && c.mac && 'c:' + c.mac.toLowerCase() === key;
+			});
+
+			if (client)
+				clientDialog(client, cache.hints, cache.ov, clientNodeChoices(overlay._state), function() {
+					return Promise.resolve(refreshClients()).then(ensureMapClients);
+				});
+		}
 	}
 
 	stage.addEventListener('pointerup', endPtr);
@@ -2615,9 +2622,7 @@ function renderMeshMap(state, chrome) {
 				});
 				extras[id] = {
 					kind: 'client',
-					client: c,
 					actionable: true,
-					parent: parent,
 					tip: parts.name ? '%s (%s)'.format(parts.name, c.mac) : (c.mac || '')
 				};
 			});
@@ -3448,7 +3453,7 @@ function signalBlock(c) {
 	]);
 }
 
-function clientDialog(c, hints, ov, nodeName, allNodes, refresh) {
+function clientDialog(c, hints, ov, allNodes, refresh) {
 	var mac = c.mac.toLowerCase();
 	var saved = ov[mac] || { band: 'both', alias: '', nodes: [] };
 	var sysName = usableClientName(c.host, c.mac) || usableClientName(common.hostName(hints, c.mac), c.mac);
@@ -3816,7 +3821,7 @@ function clientRow(c, hints, ov, nodeName, allNodes, refresh) {
 	var badge = '';
 	var action = E('button', {
 		'class': 'btn cbi-button',
-		'click': function() { clientDialog(c, hints, ov, nodeName, allNodes, refresh); }
+		'click': function() { clientDialog(c, hints, ov, allNodes, refresh); }
 	}, readOnly ? _('Details') : _('Settings'));
 
 	if (!seen)
@@ -3856,6 +3861,13 @@ function serviceMacs(members) {
 	return set;
 }
 
+function clientNodeChoices(state) {
+	return [ { id: 'controller', label: controllerLabel(state) } ].concat(
+		(state.members || []).map(function(m) {
+			return { id: m.id, label: m.name || m.hostname || m.id };
+		}));
+}
+
 function renderClients(state) {
 	var members = state.members || [];
 	var nodeName = {};
@@ -3868,8 +3880,7 @@ function renderClients(state) {
 	nodeName.controller = controllerLabel(state);
 	nodeNames = Object.assign({}, nodeName);
 
-	var allNodes = [ { id: 'controller', label: controllerLabel(state) } ].concat(
-		members.map(function(m) { return { id: m.id, label: nodeName[m.id] }; }));
+	var allNodes = clientNodeChoices(state);
 	var board = E('div', { 'id': 'mesh-clients-board' });
 
 	function groupOrder(ids) {
