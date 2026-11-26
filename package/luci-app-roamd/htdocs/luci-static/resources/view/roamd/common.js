@@ -126,7 +126,7 @@ function ensureStyle() {
 	if (typeof document == 'undefined')
 		return;
 
-	href = L.resource('view/roamd/roamd.css') + '?v=1.3.0-r9-ui2';
+	href = L.resource('view/roamd/roamd.css') + '?v=1.4.0';
 	link = document.getElementById('roamd-style');
 
 	if (!link) {
