@@ -440,7 +440,7 @@ function discoverDialog() {
 		});
 	}
 
-	ui.showModal(_('Add a new node'), [ wrap ]);
+	common.showModal(_('Add a new node'), [ wrap ]);
 	help();
 }
 
@@ -480,7 +480,7 @@ function confirmAcquire(c, button) {
 	var label = c.name && c.name !== 'OpenWrt' ? c.name : (c.model || c.addr);
 	var skip = E('input', { 'type': 'checkbox' });
 
-	ui.showModal(_('The device will be reset to factory settings'), [
+	common.showModal(_('The device will be reset to factory settings'), [
 		E('p', {}, _('Before capture, %s (%s) is reset to factory settings. Everything configured on it — networks, passwords, packages, firewall rules — is erased.').format(label, c.mac)),
 		E('p', {}, _('This is needed so the node starts from a known state: the controller rolls out the whole configuration itself, and leftovers from previous setups are the usual reason a capture breaks halfway.')),
 		E('p', {}, E('strong', { 'style': 'color:#c33' },
@@ -510,7 +510,7 @@ function startAcquire(addr, button, reset) {
 	if (button)
 		button.disabled = true;
 
-	ui.showModal(_('Capturing the node'), [ body ]);
+	common.showModal(_('Capturing the node'), [ body ]);
 
 	callMeshAcquire(addr, reset === false ? '0' : '1').then(function(res) {
 		res = res || {};
@@ -663,7 +663,7 @@ function renderNodes(state) {
 			'click': function() {
 				var body = E('div', {}, E('p', { 'class': 'spinning' }, _('Reading the progress…')));
 
-				ui.showModal(kindTitle, [ body ]);
+				common.showModal(kindTitle, [ body ]);
 				pollAcquire(state.acquire.task_id, body, 0, kind);
 			}
 		}, _('Show progress')))
@@ -3013,7 +3013,7 @@ function controllerDialog(state) {
 			E('button', { 'class': 'btn cbi-button-positive', 'click': save }, _('Save'))
 		];
 
-	ui.showModal(state.controller_name || self.hostname || _('This device'), [
+	common.showModal(state.controller_name || self.hostname || _('This device'), [
 		E('h4', {}, _('Basic settings')),
 		E('div', { 'class': 'cbi-value' }, [
 			E('label', { 'class': 'cbi-value-title' }, _('Controller name')),
@@ -3110,7 +3110,7 @@ function checkSelfUpdate() {
 		E('div', { 'class': 'right' }, E('button', { 'class': 'btn', 'click': function() { cancel(); } }, _('Cancel')))
 	]);
 
-	ui.showModal(_('Check for updates'), [ body ]);
+	common.showModal(_('Check for updates'), [ body ]);
 
 	var cancel = runJob(callMeshSelfCheck, SELF_CHECK_LIMIT, function(res) {
 		if (!res) {
@@ -3259,7 +3259,7 @@ function viaLabel(m, state) {
 function removeMember(id, name) {
 	var reset = E('input', { 'type': 'checkbox', 'checked': 'checked' });
 
-	ui.showModal(_('Remove the node'), [
+	common.showModal(_('Remove the node'), [
 		E('p', {}, _('Remove the node %s from the Wi-Fi system?').format(name || id)),
 		E('label', { 'class': 'cbi-value', 'style': 'display:block' }, [
 			reset, ' ', _('Reset the device to factory settings')
@@ -3276,7 +3276,7 @@ function removeMember(id, name) {
 					var body = E('div', {}, E('p', { 'class': 'spinning' }, _('Removing %s…').format(name || id)));
 
 					ui.hideModal();
-					ui.showModal(_('Remove the node'), [ body ]);
+					common.showModal(_('Remove the node'), [ body ]);
 
 					if (!wipe) {
 						callMeshMemberRemove(id).then(function() { location.reload(); });
@@ -3304,7 +3304,7 @@ function removeMember(id, name) {
 
 function updateMember(id, name) {
 	var body = E('div', {}, [ E('p', { 'class': 'spinning' }, _('Updating %s…').format(name || id)) ]);
-	ui.showModal(_('Updating the node'), [ body ]);
+	common.showModal(_('Updating the node'), [ body ]);
 
 	callMeshUpdate(id).then(function(res) {
 		if (res && res.error) {
@@ -3346,12 +3346,13 @@ function renderLog() {
 
 	function filterInput(key, ph) {
 		return E('input', {
-			'type': 'text', 'placeholder': ph, 'style': 'width:9em',
+			'type': 'text', 'placeholder': ph, 'aria-label': ph, 'style': 'width:9em',
 			'keyup': function(ev) { filters[key] = ev.target.value; refresh(); }
 		});
 	}
 
 	var typeSelect = E('select', {
+		'aria-label': _('Type'),
 		'change': function(ev) { filters.type = ev.target.value; refresh(); }
 	}, [
 		E('option', { 'value': '' }, _('all types')),
@@ -3613,7 +3614,7 @@ function clientDialog(c, hints, ov, allNodes, refresh) {
 			E('button', { 'class': 'btn cbi-button-positive', 'click': save }, _('Save'))
 		];
 
-	ui.showModal(title, [
+	common.showModal(title, [
 		E('h4', {}, _('Basic settings')),
 		E('div', { 'class': 'cbi-value' }, [
 			E('label', { 'class': 'cbi-value-title' }, _('Client name')),
@@ -3714,7 +3715,7 @@ function nodeDialog(m, state, refresh) {
 			E('button', { 'class': 'btn cbi-button-positive', 'click': save }, _('Save'))
 		];
 
-	ui.showModal(title, [
+	common.showModal(title, [
 		E('h4', {}, _('Basic settings')),
 		E('div', { 'class': 'cbi-value' }, [
 			E('label', { 'class': 'cbi-value-title' }, _('Node name')),
@@ -4395,7 +4396,7 @@ function renderSettings(state) {
 
 			ev.target.checked = false;
 
-			ui.showModal(_('Open the node web interface'), [
+			common.showModal(_('Open the node web interface'), [
 				E('p', {}, _('The web interface of every node will become reachable from the local network.')),
 				E('p', {}, _('A node is not an independent router: its Wi-Fi, addresses and firewall are set by the controller and are overwritten on the next profile rollout. Settings changed on the node itself are lost, and while they are in effect the network may work incorrectly — clients stop moving between devices, or a node drops out of the system.')),
 				E('p', {}, _('Open it only for diagnostics, and close it afterwards.')),
@@ -4519,7 +4520,7 @@ return view.extend({
 
 		common.ensureStyle();
 
-		var container = E('div', {}, [ E('h2', {}, _('Mesh Wi-Fi system')) ]);
+		var container = E('div', { 'class': 'roamd-ui' }, [ E('h2', {}, _('Mesh Wi-Fi system')) ]);
 
 		readOnly = common.isNode(state);
 		nodeUiOpen = !!state.node_ui;

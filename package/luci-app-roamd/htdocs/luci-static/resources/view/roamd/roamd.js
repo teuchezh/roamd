@@ -121,7 +121,7 @@ function tuneFromLog() {
 		if (rows.length)
 			body.push(E('ul', {}, rows));
 
-		ui.showModal(_('Roaming thresholds'), [
+		common.showModal(_('Roaming thresholds'), [
 			E('div', {}, body),
 			E('div', { 'class': 'right' }, [
 				E('button', {
@@ -521,7 +521,7 @@ function applyWizard(probe, ssid, encryption, key) {
 }
 
 function showUnsupported(probe) {
-	ui.showModal(_('Roaming network wizard'), [
+	common.showModal(_('Roaming network wizard'), [
 		E('p', { 'class': 'alert-message warning' }, probeMessage(probe.reason)),
 		E('p', {}, _('Nothing has been changed.')),
 		E('div', { 'class': 'right' }, [
@@ -603,12 +603,12 @@ function showWizard(probe) {
 			return;
 		}
 
-		ui.showModal(_('Roaming network wizard'), [
+		common.showModal(_('Roaming network wizard'), [
 			E('p', { 'class': 'spinning' }, _('Creating the network…'))
 		]);
 
 		applyWizard(check, ssid, encryption, key).catch(function (err) {
-			ui.showModal(_('Roaming network wizard'), [
+			common.showModal(_('Roaming network wizard'), [
 				E('p', { 'class': 'alert-message danger' }, '%h'.format(err)),
 				E('div', { 'class': 'right' }, [
 					E('button', { 'class': 'btn cbi-button', 'click': ui.hideModal }, _('Close'))
@@ -617,7 +617,7 @@ function showWizard(probe) {
 		});
 	}
 
-	ui.showModal(_('Roaming network wizard'), [
+	common.showModal(_('Roaming network wizard'), [
 		E('p', {}, _('Creates one network on every band with the same name and password, and turns roaming on. Channel, width and other details can be adjusted later under Network → Wireless.')),
 		E('p', {}, _('Radios that will be used:')),
 		E('ul', {}, summary),
@@ -914,6 +914,7 @@ return view.extend({
 
 		if (!common.isNode(meshState))
 			return m.render().then(function (node) {
+				node.classList.add('roamd-ui');
 				node.addEventListener('cbi-tab-active', toggleActions, true);
 				return node;
 			});
@@ -922,7 +923,7 @@ return view.extend({
 		this.handleReset = null;
 
 		return m.render().then(function (form) {
-			return E('div', {}, [ common.controlBanner(meshState), form ]);
+			return E('div', { 'class': 'roamd-ui' }, [ common.controlBanner(meshState), form ]);
 		});
 	}
 });

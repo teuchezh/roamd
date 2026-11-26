@@ -2,6 +2,7 @@
 'require baseclass';
 'require rpc';
 'require uci';
+'require ui';
 
 var callMeshStatus = rpc.declare({
 	object: 'roamd',
@@ -125,7 +126,7 @@ function ensureStyle() {
 	if (typeof document == 'undefined')
 		return;
 
-	href = L.resource('view/roamd/roamd.css') + '?v=1.3.0-r9';
+	href = L.resource('view/roamd/roamd.css') + '?v=1.3.0-r9-ui2';
 	link = document.getElementById('roamd-style');
 
 	if (!link) {
@@ -194,6 +195,12 @@ function bandKind(band) {
 }
 
 return baseclass.extend({
+	showModal: function(title, children) {
+		var modal = ui.showModal(title, children);
+		modal.classList.add('roamd-ui', 'roamd-dialog');
+		return modal;
+	},
+
 	meshStatus: callMeshStatus,
 	note: note,
 	twoLine: twoLine,
