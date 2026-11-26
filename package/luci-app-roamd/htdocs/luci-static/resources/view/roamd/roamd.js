@@ -240,8 +240,10 @@ function clientBlock(mac, client, iface) {
 			E('span', { 'class': 'roamd-muted' }, '%t'.format(client.connected || 0))
 		].concat(E('button', {
 			'class': 'btn cbi-button',
+			'aria-expanded': 'false',
 			'click': function() {
 				extra.style.display = extra.style.display ? '' : 'none';
+				this.setAttribute('aria-expanded', extra.style.display === '' ? 'true' : 'false');
 			}
 		}, _('Details')))),
 		extra
@@ -269,7 +271,7 @@ function ifaceCard(name, iface) {
 	for (var mac in cmap)
 		clients.push(clientBlock(mac, cmap[mac], iface));
 
-	return E('article', { 'class': 'roamd-card' + (iface.active ? '' : ' roamd-card-off') }, [
+	return E('article', { 'class': 'roamd-card roamd-radio-card' + (iface.active ? '' : ' roamd-card-off') }, [
 		E('div', { 'class': 'roamd-card-head' }, [
 			E('div', { 'class': 'roamd-card-id' }, [
 				E('div', { 'class': 'roamd-title' }, iface.band
@@ -298,7 +300,7 @@ function renderBoard() {
 	for (var name in ifaces)
 		names.push(name);
 
-	return E('div', {}, [
+	return E('div', { 'class': 'roamd-overview' }, [
 		renderSummary(),
 		E('h3', {}, _('Wireless interfaces')),
 		names.length

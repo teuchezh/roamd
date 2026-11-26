@@ -508,12 +508,12 @@ button.roamd-link {
 	flex-direction: column;
 	padding: 1.1rem;
 	border-radius: 10px;
-	border-top: 3px solid var(--primary-color-high, #448da6);
+	border-top: 1px solid var(--border-color-medium, #8885);
 	background: var(--background-color-high, Canvas);
 	color: var(--text-color-high, CanvasText);
 }
 .roamd-node-card.roamd-card-controller {
-	border-top-color: var(--success-color-medium, #278246);
+	border-top-color: var(--border-color-medium, #8885);
 }
 .roamd-node-card .roamd-card-head {
 	padding-bottom: .85rem;
@@ -554,7 +554,7 @@ button.roamd-link {
 	line-height: 1.4;
 }
 .roamd-node-card .roamd-facts dd:first-of-type {
-	font-size: 1.6rem;
+	font-size: 1.25rem;
 	font-weight: 700;
 	line-height: 1;
 }
@@ -570,4 +570,103 @@ button.roamd-link {
 .roamd-node-card .roamd-pill {
 	border-radius: 4px;
 	padding: .15rem .45rem;
+}
+
+/* Roaming status uses one summary and aligned client rows. */
+.roamd-overview {
+	color: var(--text-color-high, CanvasText);
+}
+.roamd-overview .roamd-summary {
+	display: flex;
+	gap: 0;
+	padding: .8rem 0;
+	margin: 1rem 0 1.5rem;
+	border-top: 1px solid var(--border-color-medium, #8885);
+	border-bottom: 1px solid var(--border-color-medium, #8885);
+}
+.roamd-overview .roamd-stat {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	padding: .25rem 1.25rem;
+	text-align: left;
+	min-width: 7rem;
+	box-shadow: none;
+}
+.roamd-overview .roamd-stat + .roamd-stat {
+	border-left: 1px solid var(--border-color-low, #8884);
+}
+.roamd-overview .roamd-k,
+.roamd-overview .roamd-muted,
+.roamd-overview .roamd-sub {
+	color: var(--text-color-medium, GrayText);
+}
+.roamd-overview .roamd-v {
+	font-size: 1rem;
+	margin-top: .3rem;
+}
+.roamd-overview button.roamd-stat:hover {
+	background: var(--background-color-low, #8881);
+}
+.roamd-overview .roamd-grid {
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+	gap: 1rem;
+}
+.roamd-radio-card {
+	padding: 1.1rem;
+	border-radius: 7px;
+	background: var(--background-color-high, Canvas);
+}
+.roamd-radio-card .roamd-title {
+	font-size: 1.05rem;
+}
+.roamd-radio-card .roamd-sub {
+	margin-top: .3rem;
+}
+.roamd-radio-card .roamd-roam {
+	display: flex;
+	align-items: baseline;
+	gap: .6rem;
+	padding: .8rem 0;
+	margin: .4rem 0;
+	border-bottom: 1px solid var(--border-color-low, #8884);
+}
+.roamd-radio-card .roamd-row {
+	display: grid;
+	grid-template-columns: minmax(8rem, 1fr) auto auto auto;
+	column-gap: .8rem;
+	row-gap: .5rem;
+	padding: .85rem 0;
+}
+.roamd-radio-card .roamd-row > span:first-of-type {
+	display: none;
+}
+.roamd-radio-card .roamd-row .btn {
+	min-height: 2rem;
+	border-radius: 4px;
+}
+.roamd-radio-card .roamd-row-extra {
+	padding: .75rem;
+	background: var(--background-color-low, #8881);
+	border-radius: 4px;
+}
+.roamd-overview .roamd-state-ok,
+.roamd-overview .roamd-dbm-ok {
+	color: var(--success-color-medium, #278246);
+}
+@media (max-width: 600px) {
+	.roamd-overview .roamd-summary {
+		flex-wrap: wrap;
+		gap: .75rem 0;
+	}
+	.roamd-overview .roamd-stat {
+		flex: 1 1 40%;
+		padding: .25rem .75rem;
+	}
+	.roamd-radio-card .roamd-row {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+	.roamd-radio-card .roamd-row > .roamd-muted {
+		grid-column: 1;
+	}
 }
