@@ -236,8 +236,15 @@ function clientBlock(mac, client, iface) {
 			E('div', { 'class': 'roamd-row-main' },
 				common.macCell(label, mac)),
 			E('span', {}, common.bandLabel(iface.band)),
-			common.dbmText(client.signal, { serving: true }),
-			E('span', { 'class': 'roamd-muted' }, '%t'.format(client.connected || 0))
+			E('span', { 'class': 'roamd-client-signal', 'title': _('Signal') }, [
+				E('span', { 'class': 'roamd-signal-bars', 'aria-hidden': 'true' },
+					[ 0, 1, 2, 3 ].map(function(level) {
+						var signal = common.signed(client.signal);
+						return E('i', { 'class': signal && signal >= -85 + level * 10 ? 'is-on' : '' });
+					})),
+				common.dbmText(client.signal, { serving: true })
+			]),
+			E('span', { 'class': 'roamd-muted', 'title': _('Uptime') }, '%t'.format(client.connected || 0))
 		].concat(E('button', {
 			'class': 'btn cbi-button',
 			'aria-expanded': 'false',
@@ -277,7 +284,11 @@ function ifaceCard(name, iface) {
 				E('div', { 'class': 'roamd-title' }, iface.band
 					? '%s · %s %s'.format(common.bandLabel(iface.band), _('Channel'), iface.channel || '—')
 					: (iface.ssid || name)),
-				E('div', { 'class': 'roamd-sub' }, iface.ssid ? '%s · %s'.format(iface.ssid, name) : name)
+				E('div', { 'class': 'roamd-sub', 'title': name }, [
+					iface.ssid || name,
+					' · ',
+					'%s %s'.format(clients.length, _('Clients'))
+				])
 			]),
 			E('span', {
 				'class': iface.active ? 'roamd-state roamd-state-ok' : 'roamd-state roamd-state-off'

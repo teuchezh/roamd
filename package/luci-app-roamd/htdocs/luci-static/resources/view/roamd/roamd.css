@@ -670,3 +670,35 @@ button.roamd-link {
 		grid-column: 1;
 	}
 }
+
+.roamd-overview .roamd-sub,
+.roamd-overview .roamd-muted,
+.roamd-overview .roamd-k {
+	color: var(--text-color-high, CanvasText);
+	opacity: .72;
+}
+.roamd-client-signal {
+	display: inline-flex;
+	align-items: center;
+	gap: .5rem;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+.roamd-signal-bars {
+	display: inline-flex;
+	align-items: flex-end;
+	gap: 2px;
+	height: 14px;
+}
+.roamd-signal-bars i {
+	display: block;
+	width: 3px;
+	height: 4px;
+	background: currentColor;
+	opacity: .18;
+	border-radius: 1px;
+}
+.roamd-signal-bars i:nth-child(2) { height: 7px; }
+.roamd-signal-bars i:nth-child(3) { height: 10px; }
+.roamd-signal-bars i:nth-child(4) { height: 14px; }
+.roamd-signal-bars i.is-on { opacity: .85; }
