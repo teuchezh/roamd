@@ -1102,20 +1102,21 @@ function mapGeomLines(name, mac) {
 			if (!part)
 				return;
 
-			lines.push({ text: part, size: 13, fill: MAP_THEME.label, weight: 600 });
+			lines.push({ text: part, size: 15, fill: MAP_THEME.label, weight: 600 });
 		});
 	}
 
 	if (mac)
 		lines.push({
 			text: String(mac),
-			size: showName ? 11 : 13,
+			size: showName ? 11 : 15,
+			secondary: showName,
 			fill: showName ? MAP_THEME.mac : MAP_THEME.label,
 			weight: showName ? 400 : 600
 		});
 
 	if (!lines.length)
-		lines.push({ text: name || mac || '', size: 13, fill: MAP_THEME.label, weight: 600 });
+		lines.push({ text: name || mac || '', size: 15, fill: MAP_THEME.label, weight: 600 });
 
 	return lines;
 }
@@ -2068,6 +2069,7 @@ function mapApplyCam(world) {
 	if (!world)
 		return;
 
+	world.classList.toggle('roamd-map-detail', mapCam.k >= 1);
 	world.setAttribute('transform',
 		'translate(' + mapCam.x + ' ' + mapCam.y + ') scale(' + mapCam.k + ')');
 }
@@ -2298,6 +2300,31 @@ function mapPaint(scene, extras) {
 	var width = mapCam.w || 800;
 	var height = mapCam.h || 600;
 	var svg, defs, world, motion;
+	var nodeGroups = [];
+	var edgeGroups = [];
+	var hovered = '', focused = '';
+
+	function highlightBranch() {
+		var key = hovered || focused;
+		var related = new Set([key]);
+
+		edgeGroups.forEach(function(group) {
+			var edge = group.edge;
+			var active = edge.from === key || edge.to === key;
+
+			if (active) {
+				related.add(edge.from);
+				related.add(edge.to);
+			}
+
+			group.el.classList.toggle('roamd-map-muted', !!key && !active);
+			group.el.classList.toggle('roamd-map-highlight', active);
+		});
+
+		nodeGroups.forEach(function(group) {
+			group.el.classList.toggle('roamd-map-muted', !!key && !related.has(group.id));
+		});
+	}
 
 	if (!mapCam.user && mapCam.w && mapCam.h)
 		mapFitCam(width, height, bounds);
@@ -2354,6 +2381,10 @@ function mapPaint(scene, extras) {
 			'pointer-events': 'none'
 		};
 		var textFill = MAP_THEME.metric;
+		var group = svgEl('g', { 'class': 'roamd-map-connection' });
+
+		edgeGroups.push({ edge: edge, el: group });
+		world.appendChild(group);
 
 		if (radio)
 			line['stroke-dasharray'] = '6 5';
@@ -2363,10 +2394,10 @@ function mapPaint(scene, extras) {
 		else if (edge.metricKind === 'speed')
 			textFill = '#d7e4f5';
 
-		world.appendChild(svgEl('line', line));
+		group.appendChild(svgEl('line', line));
 
 		if (edge.metric) {
-			world.appendChild(svgEl('text', {
+			group.appendChild(svgEl('text', {
 				x: Math.round(edge.lx),
 				y: Math.round(edge.ly),
 				'text-anchor': 'middle',
@@ -2397,7 +2428,7 @@ function mapPaint(scene, extras) {
 				dur: '1.6s',
 				repeatCount: 'indefinite'
 			}));
-			world.appendChild(dot);
+			group.appendChild(dot);
 		}
 	});
 
@@ -2417,8 +2448,10 @@ function mapPaint(scene, extras) {
 			halo = MAP_THEME.haloK;
 		}
 
-		if (!spec.online && !spec.unknown)
-			fill = MAP_THEME.off;
+		if (!spec.online && !spec.unknown) {
+			fill = MAP_THEME.bg;
+			stroke = MAP_THEME.off;
+		}
 
 		g = svgEl('g', {
 			'class': 'roamd-map-node',
@@ -2428,6 +2461,28 @@ function mapPaint(scene, extras) {
 			'aria-label': extras[spec.id].actionable ? extras[spec.id].tip : null,
 			'style': extras[spec.id].actionable ? 'cursor:pointer' : null
 		});
+		nodeGroups.push({ id: spec.id, el: g });
+		g.addEventListener('pointerenter', function(ev) {
+			if (ev.pointerType !== 'touch') {
+				hovered = spec.id;
+				highlightBranch();
+			}
+		});
+		g.addEventListener('pointerleave', function() {
+			if (hovered === spec.id) {
+				hovered = '';
+				highlightBranch();
+			}
+		});
+		g.addEventListener('focus', function() {
+			focused = spec.id;
+			highlightBranch();
+		});
+		g.addEventListener('blur', function() {
+			focused = '';
+			highlightBranch();
+		});
+
 		g.appendChild(svgEl('title', {}, [ (extras[spec.id] && extras[spec.id].tip) || spec.name || spec.mac || spec.id ]));
 		halo = svgEl('circle', {
 			cx: Math.round(spec.x),
@@ -2455,6 +2510,17 @@ function mapPaint(scene, extras) {
 				stroke: stroke,
 				'stroke-width': 1
 			}));
+		else if (spec.kind === 'node')
+			g.appendChild(svgEl('rect', {
+				x: Math.round(spec.x) - spec.r * 0.75,
+				y: Math.round(spec.y) - spec.r * 0.75,
+				width: spec.r * 1.5,
+				height: spec.r * 1.5,
+				rx: 4,
+				fill: fill,
+				stroke: stroke,
+				'stroke-width': 1.5
+			}));
 		else
 			g.appendChild(svgEl('circle', {
 				cx: Math.round(spec.x),
@@ -2476,12 +2542,17 @@ function mapPaint(scene, extras) {
 				x: Math.round(label.x),
 				y: Math.round(label.y),
 				'text-anchor': label.anchor || 'middle',
+				stroke: MAP_THEME.bg,
+				'stroke-width': 3,
+				'stroke-linejoin': 'round',
+				'paint-order': 'stroke',
 				'font-family': 'sans-serif'
 			});
 			(label.lines || []).forEach(function(line, i) {
 				text.appendChild(svgEl('tspan', {
 					x: Math.round(label.x),
 					dy: i ? (label.lines[i - 1].size + 3) : 0,
+					'class': line.secondary ? 'roamd-map-secondary' : null,
 					'font-size': line.size,
 					'font-weight': line.weight || 400,
 					fill: line.fill
@@ -2714,6 +2785,10 @@ function mapClientParts(c, hints, ov) {
 
 function mapOverlayCss() {
 	return '' +
+		'.roamd-map-world .roamd-map-muted{opacity:.32}' +
+		'.roamd-map-highlight>line{stroke-width:2.6px}' +
+		'.roamd-map-world:not(.roamd-map-detail) .roamd-map-secondary{opacity:0;pointer-events:none}' +
+		'.roamd-map-world .roamd-map-node:hover .roamd-map-secondary,.roamd-map-world .roamd-map-node:focus .roamd-map-secondary{opacity:1}' +
 		'#roamd-map-overlay .roamd-switch{display:inline-flex;padding:2px;border:1px solid #ccc;border-radius:999px;background:#f2f2f2}' +
 		'#roamd-map-overlay .roamd-switch-opt{position:relative;margin:0;cursor:pointer}' +
 		'#roamd-map-overlay .roamd-switch-opt input{position:absolute;opacity:0;width:1px;height:1px}' +
