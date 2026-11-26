@@ -31,6 +31,23 @@ function openClients(nodeId) {
 	refreshClients();
 }
 
+var callRoamingStatus = rpc.declare({
+	object: 'roamd',
+	method: 'status',
+	expect: { '': {} }
+});
+
+function meshStatusWithRoaming() {
+	return Promise.all([
+		common.meshStatus(),
+		callRoamingStatus().catch(function() { return null; })
+	]).then(function(results) {
+		var state = results[0] || {};
+		state.controller_roaming = results[1];
+		return state;
+	});
+}
+
 var callMeshClients = rpc.declare({
 	object: 'roamd',
 	method: 'mesh_clients',
@@ -863,6 +880,56 @@ function controllerDialog(state) {
 	]);
 }
 
+function controllerRoamingValue(status) {
+	function value(text, style, detail) {
+		return E('span', { 'class': 'roamd-state ' + style, 'title': detail || text }, text);
+	}
+
+	if (!status || typeof status.enabled !== 'boolean')
+		return value(_('Roaming status unavailable'), 'roamd-state-warn');
+	if (!status.enabled)
+		return value(_('Roaming disabled'), 'roamd-state-off');
+
+	var interfaces = Object.keys(status.interfaces || {}).map(function(name) {
+		return { name: name, iface: status.interfaces[name] };
+	}).filter(function(entry) { return entry.iface.active && entry.iface.managed; });
+
+	if (!interfaces.length)
+		return value(_('No active roaming interfaces'), 'roamd-state-warn');
+
+	var broken = false, unknown = false, details = [];
+	interfaces.forEach(function(entry) {
+		var roaming = entry.iface.roaming;
+		if (!roaming || ['ok', 'degraded', 'broken'].indexOf(roaming.state) < 0) {
+			unknown = true;
+			return;
+		}
+		broken = broken || roaming.state === 'broken';
+		if (roaming.state !== 'ok')
+			details.push(entry.name + ': ' + (roaming.issues || []).map(function(issue) {
+				return CONTROLLER_ISSUE_TEXT[issue] || ISSUE_TEXT[issue] || issue;
+			}).join(', '));
+	});
+
+	if (broken || details.length)
+		return value(broken ? _('roaming broken') : _('roaming degraded'),
+			broken ? 'roamd-state-bad' : 'roamd-state-warn', details.join('; '));
+	if (unknown)
+		return value(_('Roaming status unavailable'), 'roamd-state-warn');
+	return value(_('works'), 'roamd-state-ok');
+}
+
+var CONTROLLER_ISSUE_TEXT = {
+	no_peer: _('No matching radio interface'),
+	disabled: _('A matching radio interface is disabled'),
+	key: _('Wi-Fi passwords differ'),
+	network: _('Networks differ'),
+	no_11k: _('802.11k is disabled'),
+	no_11v: _('802.11v is disabled'),
+	fast_transition: _('802.11r settings differ'),
+	no_neighbor_report: _('Neighbor report unavailable')
+};
+
 function controllerCard(state) {
 	var self = state.self || {};
 	var name = state.controller_name || self.hostname || _('This device');
@@ -888,7 +955,7 @@ function controllerCard(state) {
 			[ _('Uptime'), self.uptime ? '%t'.format(self.uptime) : '—' ],
 			[ _('Via'), '—' ],
 			[ _('Connection'), '—' ],
-			[ _('Roaming'), '—' ]
+			[ _('Roaming'), controllerRoamingValue(state.controller_roaming) ]
 		]),
 		E('div', { 'class': 'roamd-card-actions' }, check)
 	]);
@@ -987,7 +1054,7 @@ function nameCell(m) {
 }
 
 function refreshNodes() {
-	return common.meshStatus().then(function(fresh) {
+	return meshStatusWithRoaming().then(function(fresh) {
 		var pane = document.getElementById('mesh-nodes-pane');
 
 		fresh = fresh || {};
@@ -2241,7 +2308,7 @@ function renderController(state) {
 return view.extend({
 	load: function() {
 		return Promise.all([
-			common.meshStatus().catch(function() { return {}; }),
+			meshStatusWithRoaming().catch(function() { return {}; }),
 			uci.load('roamd').catch(function() { return null; })
 		]);
 	},

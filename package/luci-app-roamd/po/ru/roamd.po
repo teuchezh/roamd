@@ -1370,3 +1370,36 @@ msgstr "дБм"
 
 msgid "stale"
 msgstr "устарело"
+
+msgid "Roaming status unavailable"
+msgstr "Статус роуминга недоступен"
+
+msgid "Roaming disabled"
+msgstr "Роуминг выключен"
+
+msgid "No active roaming interfaces"
+msgstr "Нет активных интерфейсов роуминга"
+
+msgid "No matching radio interface"
+msgstr "Нет парного радиоинтерфейса"
+
+msgid "A matching radio interface is disabled"
+msgstr "Парный радиоинтерфейс выключен"
+
+msgid "Wi-Fi passwords differ"
+msgstr "Пароли Wi-Fi различаются"
+
+msgid "Networks differ"
+msgstr "Сети различаются"
+
+msgid "802.11k is disabled"
+msgstr "802.11k выключен"
+
+msgid "802.11v is disabled"
+msgstr "802.11v выключен"
+
+msgid "802.11r settings differ"
+msgstr "Настройки 802.11r различаются"
+
+msgid "Neighbor report unavailable"
+msgstr "Отчёт о соседях недоступен"
