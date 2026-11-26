@@ -1445,3 +1445,27 @@ msgstr "Разница между диапазонами: %d дБ → %d дБ"
 
 msgid "The transition log could not be read."
 msgstr "Не удалось прочитать журнал переходов."
+
+msgid "Cards"
+msgstr "Панель"
+
+msgid "Map"
+msgstr "Карта"
+
+msgid "View"
+msgstr "Вид"
+
+msgid "Show clients"
+msgstr "Показать устройства"
+
+msgid "Radio"
+msgstr "Радио"
+
+msgid "Parent unknown"
+msgstr "Родитель неизвестен"
+
+msgid "Loading clients…"
+msgstr "Загрузка устройств…"
+
+msgid "Clients could not be loaded"
+msgstr "Не удалось загрузить устройства"
