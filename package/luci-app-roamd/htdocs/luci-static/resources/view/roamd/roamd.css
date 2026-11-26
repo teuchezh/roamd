@@ -421,7 +421,8 @@ button.roamd-link {
 .roamd-map-legend {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 0.4rem 1rem;
+	align-items: center;
+	gap: 0.45rem 1.1rem;
 	padding: 0.55rem 0.85rem 0;
 	color: #c5c8ce;
 	font-size: 0.82rem;

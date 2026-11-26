@@ -16,6 +16,10 @@ var mapShowClients = true;
 var mapClientCache = null;
 var mapClientSeq = 0;
 var meshViewState = null;
+var mapCam = { x: 0, y: 0, k: 1, sig: null, user: false, w: 0, h: 0 };
+var mapBindSeq = 0;
+var mapObserver = null;
+var mapLive = { stamp: '', macs: {}, bytes: {} };
 
 function locationHash() {
 	try {
@@ -676,33 +680,34 @@ function renderNodes(state) {
 		pref = uci.get('roamd', 'global', 'prefer_band') || '';
 	} catch (e) {}
 
+	var lead = E('p', { 'class': 'roamd-lead', 'style': 'margin:0' }, [
+		'%s %s'.format(String(counts.nodes || 0), _('Nodes')),
+		' · ',
+		E('button', {
+			'class': 'roamd-link',
+			'click': function(ev) { ev.preventDefault(); openClients(''); }
+		}, '%s %s'.format(String(counts.clients || 0), _('Clients'))),
+		pref ? ' · ' + preferText(pref) : ''
+	]);
+
+	if (nodesView === 'map')
+		return renderMeshMap(state, {
+			deps: deps,
+			running: running,
+			lead: lead,
+			addButton: addButton
+		});
+
 	return E('div', {}, [
 		deps, running,
-		E('div', { 'class': 'roamd-toolbar' }, [
-			E('p', { 'class': 'roamd-lead' }, [
-				'%s %s'.format(String(counts.nodes || 0), _('Nodes')),
-				' · ',
-				E('button', {
-					'class': 'roamd-link',
-					'click': function(ev) { ev.preventDefault(); openClients(''); }
-				}, '%s %s'.format(String(counts.clients || 0), _('Clients'))),
-				pref ? ' · ' + preferText(pref) : ''
-			]),
-			addButton
-		]),
+		E('div', { 'class': 'roamd-toolbar' }, [ lead, addButton ]),
 		E('div', { 'class': 'roamd-viewbar' }, [
 			nodesViewSwitch(),
-			nodesView === 'map' ? mapClientSwitch() : '',
 			mapClientStatus()
 		]),
-		nodesView === 'map' ? renderMeshMap(state) : E('div', { 'class': 'roamd-grid' }, cards)
+		E('div', { 'class': 'roamd-grid' }, cards)
 	]);
 }
-
-/* Radial graph of parent links. The controller is the center; positions are not coordinates. */
-var MAP_RING = 188;
-var MAP_CLIENT_GAP = 156;
-var MAP_PAD = 48;
 
 function mapClientRssi(c) {
 	var sample, dbm;
@@ -738,160 +743,6 @@ function mapEdgeMetric(kind, dbm) {
 		return '%d %s'.format(dbm, _('dBm'));
 
 	return '\u2014';
-}
-
-function starPoints(cx, cy, outer, inner, n) {
-	var pts = [];
-	var i, a, r;
-
-	for (i = 0; i < n * 2; i++) {
-		a = -Math.PI / 2 + i * Math.PI / n;
-		r = (i % 2) ? inner : outer;
-		pts.push(ri(cx + Math.cos(a) * r) + ',' + ri(cy + Math.sin(a) * r));
-	}
-
-	return pts.join(' ');
-}
-
-function layoutRadial(graph, clientLists) {
-	var children = (graph && graph.children) || {};
-	var pos = {};
-	var placed = {};
-
-	function walk(id, angle, spread, depth) {
-		var kids, n, use, step, start, i;
-
-		if (placed[id])
-			return;
-
-		placed[id] = true;
-		pos[id] = {
-			x: Math.cos(angle) * depth * MAP_RING,
-			y: Math.sin(angle) * depth * MAP_RING,
-			angle: angle,
-			depth: depth
-		};
-
-		kids = children[id] || [];
-		n = kids.length;
-
-		if (!n)
-			return;
-
-		use = depth === 0 ? Math.PI * 2 : Math.min(spread, Math.PI * 0.9);
-		step = use / n;
-		start = angle - use / 2 + step / 2;
-
-		for (i = 0; i < n; i++)
-			walk(kids[i], start + i * step, step * 0.92, depth + 1);
-	}
-
-	function putClient(c, angle, radius, parentId) {
-		var parent = pos[parentId];
-
-		pos['c:' + String(c.mac).toLowerCase()] = {
-			x: Math.cos(angle) * radius,
-			y: Math.sin(angle) * radius,
-			angle: angle,
-			depth: (parent ? parent.depth : 0) + 1,
-			client: c,
-			parent: parentId
-		};
-	}
-
-	function placeOuter(parentId, list, baseAngle, radius) {
-		var n = list.length;
-		var arc, i, t;
-
-		if (!n)
-			return;
-
-		arc = Math.min(1.05, 0.48 * Math.max(n - 1, 1));
-
-		for (i = 0; i < n; i++) {
-			t = n === 1 ? 0.5 : i / (n - 1);
-			putClient(list[i], baseAngle - arc / 2 + arc * t, radius, parentId);
-		}
-	}
-
-	function placeControllerClients(list) {
-		var kids = children.controller || [];
-		var angles = [];
-		var gaps = [];
-		var buckets, i, a0, a1, span;
-
-		if (!kids.length) {
-			placeOuter('controller', list, -Math.PI / 2, MAP_RING + MAP_CLIENT_GAP);
-			return;
-		}
-
-		kids.forEach(function(id) {
-			if (pos[id])
-				angles.push(pos[id].angle);
-		});
-		angles.sort(function(a, b) { return a - b; });
-
-		for (i = 0; i < angles.length; i++) {
-			a0 = angles[i];
-			a1 = angles[(i + 1) % angles.length];
-			span = (i === angles.length - 1) ? (a1 + Math.PI * 2 - a0) : (a1 - a0);
-			gaps.push({ mid: a0 + span / 2, span: span });
-		}
-
-		buckets = gaps.map(function() { return []; });
-		list.forEach(function(c, idx) {
-			buckets[idx % buckets.length].push(c);
-		});
-		buckets.forEach(function(bucket, gi) {
-			var g = gaps[gi];
-			var n = bucket.length;
-			var arc = Math.min(g.span * 0.42, 0.5 * Math.max(n - 1, 1));
-
-			bucket.forEach(function(c, bi) {
-				var t = n === 1 ? 0.5 : bi / (n - 1);
-
-				putClient(c, g.mid - arc / 2 + arc * t, MAP_RING + MAP_CLIENT_GAP, 'controller');
-			});
-		});
-	}
-
-	walk('controller', -2.15, Math.PI * 2, 0);
-
-	(graph.orphans || []).forEach(function(id, i) {
-		var a;
-
-		if (pos[id])
-			return;
-
-		a = Math.PI / 5 + i * 0.85;
-		pos[id] = {
-			x: Math.cos(a) * MAP_RING,
-			y: Math.sin(a) * MAP_RING,
-			angle: a,
-			depth: 1,
-			orphan: true
-		};
-	});
-
-	Object.keys(clientLists || {}).forEach(function(id) {
-		var list = clientLists[id] || [];
-		var p = pos[id];
-
-		if (!list.length)
-			return;
-
-		if (id === 'controller') {
-			placeControllerClients(list);
-			return;
-		}
-
-		if (!p)
-			return;
-
-		placeOuter(id, list, p.angle, Math.sqrt(p.x * p.x + p.y * p.y) + MAP_CLIENT_GAP);
-	});
-
-	return pos;
 }
 
 function parentCycle(id, parentId, parentOf) {
@@ -987,6 +838,9 @@ function mapClientSig(cache) {
 			c.wired ? '1' : '0',
 			c.band || '',
 			mapClientRssi(c) == null ? '' : String(mapClientRssi(c)),
+			c.rate ? String(c.rate) : '',
+			c.rx_bytes ? String(c.rx_bytes) : '',
+			c.tx_bytes ? String(c.tx_bytes) : '',
 			mapClientLabel(c, cache.hints, cache.ov)
 		].join('\t');
 	}).join('\n');
@@ -1055,7 +909,7 @@ function ensureMapClients() {
 			return;
 
 		if (!res[0]) {
-			next = { clients: [], hints: {}, ov: {}, failed: true };
+			next = { clients: [], hints: {}, ov: {}, failed: true, stamp: 'failed' };
 		} else {
 			list = (res[0] && res[0].clients) || res[0] || [];
 
@@ -1068,6 +922,7 @@ function ensureMapClients() {
 				ov: safeOverrides(),
 				failed: false
 			};
+			next.stamp = mapClientSig(next);
 		}
 
 		if (mapClientSig(next) === mapClientSig(mapClientCache))
@@ -1149,6 +1004,871 @@ function mapClientStatus() {
 	return '';
 }
 
+/* mapgeom-start */
+var MAP_THEME = {
+	bg: '#16181d',
+	star: '#e04e5d',
+	starStroke: '#4a1820',
+	node: '#4ea3e0',
+	nodeStroke: '#143044',
+	client: '#97b552',
+	clientStroke: '#243012',
+	unknown: '#e0a15a',
+	off: '#8a93a0',
+	cable: '#9aa7b8',
+	radio: '#e0a15a',
+	label: '#f4f6f8',
+	mac: '#b7bdc7',
+	metric: '#c5cad3',
+	metricRadio: '#f0c48a',
+	haloC: 'rgba(224,78,93,0.30)',
+	haloN: 'rgba(78,163,224,0.24)',
+	haloK: 'rgba(151,181,82,0.22)'
+};
+
+function mapGeomHypot(x, y) {
+	return Math.sqrt(x * x + y * y);
+}
+
+function mapGeomRadius(kind) {
+	if (kind === 'controller')
+		return 16;
+
+	if (kind === 'client')
+		return 7;
+
+	return 12;
+}
+
+function mapGeomTextWidth(text, size) {
+	var s = String(text || '');
+	var w = 0;
+	var i, c;
+
+	for (i = 0; i < s.length; i++) {
+		c = s.charCodeAt(i);
+		if (c === 32)
+			w += size * 0.34;
+		else if (c === 58)
+			w += size * 0.36;
+		else if (c < 128)
+			w += size * 0.60;
+		else
+			w += size * 0.64;
+	}
+
+	return w;
+}
+
+function mapGeomSplitName(text) {
+	var parts, best, score, i, left, right, diff;
+
+	text = String(text || '');
+
+	if (text.length <= 16)
+		return [ text ];
+
+	parts = text.split(/\s+/);
+
+	if (parts.length < 2)
+		return [ text ];
+
+	best = 1;
+	score = 1e9;
+
+	for (i = 1; i < parts.length; i++) {
+		left = parts.slice(0, i).join(' ');
+		right = parts.slice(i).join(' ');
+		diff = Math.abs(left.length - right.length);
+
+		if (diff < score) {
+			score = diff;
+			best = i;
+		}
+	}
+
+	return [ parts.slice(0, best).join(' '), parts.slice(best).join(' ') ];
+}
+
+function mapGeomLines(name, mac) {
+	var lines = [];
+	var showName = !!(name && (!mac || String(name).toLowerCase() !== String(mac).toLowerCase()));
+
+	if (showName) {
+		mapGeomSplitName(name).forEach(function(part) {
+			if (!part)
+				return;
+
+			lines.push({ text: part, size: 13, fill: MAP_THEME.label, weight: 600 });
+		});
+	}
+
+	if (mac)
+		lines.push({
+			text: String(mac),
+			size: showName ? 11 : 13,
+			fill: showName ? MAP_THEME.mac : MAP_THEME.label,
+			weight: showName ? 400 : 600
+		});
+
+	if (!lines.length)
+		lines.push({ text: name || mac || '', size: 13, fill: MAP_THEME.label, weight: 600 });
+
+	return lines;
+}
+
+function mapGeomMeasure(lines) {
+	var w = 0;
+	var h = 0;
+
+	(lines || []).forEach(function(ln, i) {
+		w = Math.max(w, mapGeomTextWidth(ln.text, ln.size));
+		h += ln.size + (i ? 3 : 0);
+	});
+
+	return { w: w, h: Math.max(h, 12) };
+}
+
+function mapGeomLabelSpan(lines) {
+	return mapGeomMeasure(lines).w + 22;
+}
+
+function mapGeomBox(x, y, anchor, lines) {
+	var m = mapGeomMeasure(lines);
+	var x0 = x - m.w / 2;
+
+	if (anchor === 'start')
+		x0 = x;
+	else if (anchor === 'end')
+		x0 = x - m.w;
+
+	return {
+		x: x,
+		y: y,
+		anchor: anchor,
+		lines: lines,
+		x0: x0,
+		y0: y - (lines[0] ? lines[0].size : 12),
+		x1: x0 + m.w,
+		y1: y - (lines[0] ? lines[0].size : 12) + m.h
+	};
+}
+
+function mapGeomStar(cx, cy, outer, inner, n) {
+	var pts = [];
+	var i, a, r;
+
+	for (i = 0; i < n * 2; i++) {
+		a = -Math.PI / 2 + i * Math.PI / n;
+		r = (i % 2) ? inner : outer;
+		pts.push((Math.round(cx + Math.cos(a) * r * 10) / 10) + ',' +
+			(Math.round(cy + Math.sin(a) * r * 10) / 10));
+	}
+
+	return pts.join(' ');
+}
+
+function mapGeomAngForward(from, to) {
+	var d = to - from;
+
+	while (d <= 0)
+		d += Math.PI * 2;
+
+	while (d > Math.PI * 2)
+		d -= Math.PI * 2;
+
+	return d;
+}
+
+function mapGeomRingCap(r, sector, span) {
+	var arc = Math.max(0.35, sector) * 0.9;
+	var half = span / 2;
+
+	if (!(r > half + 4))
+		return 1;
+
+	var step = 2 * Math.asin(Math.min(0.96, half / r));
+
+	if (!(step > 0))
+		return 1;
+
+	return Math.max(1, Math.floor(arc / step) + 1);
+}
+
+function mapGeomLayout(items) {
+	var byId = {};
+	var list = [];
+	var structKids = {};
+	var clientKids = {};
+	var pos = {};
+	var seen = {};
+	var rootKids, nRoot, ring, start, i, id;
+
+	(items || []).forEach(function(item) {
+		var copy, parent;
+
+		if (!item || !item.id || byId[item.id])
+			return;
+
+		copy = {
+			id: item.id,
+			kind: item.kind || 'node',
+			parent: item.parent || '',
+			name: item.name || '',
+			mac: item.mac || '',
+			online: item.online !== false,
+			unknown: !!item.unknown,
+			link: item.link || '',
+			metric: item.metric || '',
+			metricKind: item.metricKind || '',
+			active: !!item.active
+		};
+		copy.lines = mapGeomLines(copy.name, copy.mac);
+		parent = copy.parent;
+
+		if (copy.kind === 'controller')
+			parent = '';
+		else if (parent && parent !== 'controller') {
+			/* parent may not be copied yet; resolved after the scan */
+		}
+
+		copy.parent = parent;
+		byId[copy.id] = copy;
+		list.push(copy);
+	});
+
+	if (!byId.controller) {
+		byId.controller = {
+			id: 'controller',
+			kind: 'controller',
+			parent: '',
+			name: '',
+			mac: '',
+			online: true,
+			unknown: false,
+			link: '',
+			metric: '',
+			metricKind: '',
+			lines: mapGeomLines('', '')
+		};
+		list.unshift(byId.controller);
+	}
+
+	list.forEach(function(item) {
+		if (item.kind === 'controller') {
+			item.parent = '';
+			return;
+		}
+
+		if (item.parent && !byId[item.parent])
+			item.parent = item.kind === 'client' ? 'controller' : '';
+	});
+
+	function addChild(bucket, pid, cid) {
+		if (!bucket[pid])
+			bucket[pid] = [];
+
+		bucket[pid].push(cid);
+	}
+
+	list.forEach(function(item) {
+		if (item.kind === 'controller')
+			return;
+
+		if (item.kind === 'client')
+			addChild(clientKids, item.parent || 'controller', item.id);
+		else
+			addChild(structKids, item.parent || '', item.id);
+	});
+
+	function byLabel(a, b) {
+		var an = byId[a];
+		var bn = byId[b];
+		var as = ((an.name || an.mac || an.id) + '').toLowerCase();
+		var bs = ((bn.name || bn.mac || bn.id) + '').toLowerCase();
+
+		if (as < bs)
+			return -1;
+
+		if (as > bs)
+			return 1;
+
+		return an.id < bn.id ? -1 : (an.id > bn.id ? 1 : 0);
+	}
+
+	Object.keys(structKids).forEach(function(pid) {
+		structKids[pid].sort(byLabel);
+	});
+	Object.keys(clientKids).forEach(function(pid) {
+		clientKids[pid].sort(byLabel);
+	});
+
+	pos.controller = { x: 0, y: 0, angle: -Math.PI / 2, depth: 0 };
+	rootKids = (structKids.controller || []).concat(structKids[''] || []);
+	nRoot = rootKids.length;
+	ring = 228;
+
+	if (nRoot > 1) {
+		var widest = 120;
+
+		rootKids.forEach(function(cid) {
+			widest = Math.max(widest, mapGeomLabelSpan(byId[cid].lines));
+		});
+		ring = Math.max(228, (widest + 56) / (2 * Math.sin(Math.PI / nRoot)));
+	}
+
+	start = -0.62;
+
+	rootKids.forEach(function(cid, idx) {
+		var a = nRoot ? start + idx * (Math.PI * 2 / nRoot) : start;
+
+		pos[cid] = {
+			x: Math.cos(a) * ring,
+			y: Math.sin(a) * ring,
+			angle: a,
+			depth: 1
+		};
+	});
+
+	function placeSubtree(pid, depth) {
+		var kids = structKids[pid] || [];
+		var p = pos[pid];
+		var spread, baseR, step, a0;
+
+		if (!p || !kids.length || seen[pid])
+			return;
+
+		seen[pid] = true;
+		spread = Math.min(Math.PI * 0.85, Math.max(0.7, 0.42 * kids.length));
+		baseR = mapGeomHypot(p.x, p.y) + 210;
+		step = kids.length > 1 ? spread / (kids.length - 1) : 0;
+		a0 = p.angle - spread / 2;
+
+		kids.forEach(function(cid, idx) {
+			var a;
+
+			if (pos[cid])
+				return;
+
+			a = kids.length === 1 ? p.angle : a0 + step * idx;
+			pos[cid] = {
+				x: Math.cos(a) * baseR,
+				y: Math.sin(a) * baseR,
+				angle: a,
+				depth: depth + 1
+			};
+			placeSubtree(cid, depth + 1);
+		});
+	}
+
+	rootKids.forEach(function(cid) {
+		placeSubtree(cid, 1);
+	});
+	seen.controller = true;
+
+	function placeClients(pid, ids, sector, center, baseR) {
+		var left = (ids || []).slice();
+		var r = Math.max(baseR, 200);
+		var guard = 0;
+
+		while (left.length && guard < 10) {
+			var widest = 100;
+			var goal, cap, take, m, arc, step, minStep, t, a, cid;
+
+			guard++;
+			left.forEach(function(cid) {
+				widest = Math.max(widest, mapGeomLabelSpan(byId[cid].lines));
+			});
+			goal = Math.min(left.length, sector > 2.2 ? 8 : 6);
+
+			while (r < baseR + 900 && mapGeomRingCap(r, sector, widest) < goal)
+				r += 42;
+
+			cap = Math.max(1, mapGeomRingCap(r, sector, widest));
+			take = left.splice(0, cap);
+			m = take.length;
+			arc = Math.max(0.2, sector) * 0.88;
+			step = m > 1 ? arc / (m - 1) : 0;
+			minStep = widest >= r * 1.9 ? step : 2 * Math.asin(Math.min(0.96, (widest / 2) / r));
+
+			if (m > 1 && step < minStep) {
+				step = minStep;
+				arc = step * (m - 1);
+			}
+
+			for (t = 0; t < m; t++) {
+				cid = take[t];
+				a = m === 1 ? center : (center - arc / 2 + arc * (t / (m - 1)));
+				pos[cid] = {
+					x: Math.cos(a) * r,
+					y: Math.sin(a) * r,
+					angle: a,
+					depth: (pos[pid] ? pos[pid].depth + 1 : 1)
+				};
+			}
+
+			r += Math.max(112, Math.round(widest * 0.42));
+		}
+	}
+
+	var ordered = rootKids.slice().sort(function(a, b) {
+		return pos[a].angle - pos[b].angle;
+	});
+
+	ordered.forEach(function(cid, idx) {
+		var clients = clientKids[cid] || [];
+		var a, prev, next, gapPrev, gapNext, sector, parentR;
+
+		if (!clients.length)
+			return;
+
+		a = pos[cid].angle;
+
+		if (ordered.length < 2) {
+			sector = Math.PI * 1.35;
+		} else {
+			prev = pos[ordered[(idx - 1 + ordered.length) % ordered.length]].angle;
+			next = pos[ordered[(idx + 1) % ordered.length]].angle;
+			gapPrev = mapGeomAngForward(prev, a);
+			gapNext = mapGeomAngForward(a, next);
+			sector = Math.min(Math.PI * 1.05, (gapPrev / 2 + gapNext / 2) * 0.82);
+		}
+
+		parentR = mapGeomHypot(pos[cid].x, pos[cid].y);
+		placeClients(cid, clients, Math.max(0.7, sector), a, parentR + 176);
+	});
+
+	Object.keys(clientKids).forEach(function(pid) {
+		var p, clients;
+
+		if (pid === 'controller' || !pid)
+			return;
+
+		if (ordered.indexOf(pid) >= 0 || !pos[pid])
+			return;
+
+		clients = clientKids[pid] || [];
+		p = pos[pid];
+		placeClients(pid, clients, Math.PI * 0.9, p.angle, mapGeomHypot(p.x, p.y) + 176);
+	});
+
+	(function placeControllerClients() {
+		var clients = (clientKids.controller || []).concat(clientKids[''] || []);
+		var gaps, buckets, g;
+
+		if (!clients.length)
+			return;
+
+		if (!ordered.length) {
+			placeClients('controller', clients, Math.PI * 2, -Math.PI / 2, ring + 40);
+			return;
+		}
+
+		gaps = [];
+
+		for (g = 0; g < ordered.length; g++) {
+			var a0 = pos[ordered[g]].angle;
+			var a1 = pos[ordered[(g + 1) % ordered.length]].angle;
+			var span = mapGeomAngForward(a0, a1);
+
+			gaps.push({ mid: a0 + span / 2, span: span });
+		}
+
+		buckets = gaps.map(function() { return []; });
+		clients.forEach(function(cid) {
+			var best = 0;
+			var gi;
+
+			for (gi = 1; gi < gaps.length; gi++) {
+				if (buckets[gi].length / gaps[gi].span < buckets[best].length / gaps[best].span)
+					best = gi;
+			}
+
+			buckets[best].push(cid);
+		});
+
+		buckets.forEach(function(bucket, gi) {
+			var span = gaps[gi].span;
+			var s, r;
+
+			if (!bucket.length)
+				return;
+
+			s = Math.sin(Math.min(span / 4, 1.15));
+			r = ring + 36;
+
+			if (s > 0.08)
+				r = Math.max(r, 150 / (2 * s));
+
+			placeClients('controller', bucket, Math.max(0.55, span * 0.52), gaps[gi].mid, r);
+		});
+	})();
+
+	function separate() {
+		var ids = Object.keys(pos);
+		var k, i, j, a, b, na, nb, dx, dy, d, minD, push, parent, minOut;
+
+		for (k = 0; k < 48; k++) {
+			var moved = false;
+
+			for (i = 0; i < ids.length; i++) {
+				na = byId[ids[i]];
+
+				if (!na || na.kind !== 'client' || !pos[na.parent])
+					continue;
+
+				a = pos[ids[i]];
+				parent = pos[na.parent];
+				dx = a.x - parent.x;
+				dy = a.y - parent.y;
+				d = mapGeomHypot(dx, dy) || 1;
+				minOut = mapGeomRadius(byId[na.parent].kind) + mapGeomRadius('client') + 132;
+
+				if (d < minOut) {
+					a.x = parent.x + dx / d * minOut;
+					a.y = parent.y + dy / d * minOut;
+					moved = true;
+				}
+			}
+
+			for (i = 0; i < ids.length; i++) {
+				for (j = i + 1; j < ids.length; j++) {
+					a = pos[ids[i]];
+					b = pos[ids[j]];
+					na = byId[ids[i]];
+					nb = byId[ids[j]];
+					dx = b.x - a.x;
+					dy = b.y - a.y;
+					d = mapGeomHypot(dx, dy) || 0.01;
+					minD = mapGeomRadius(na.kind) + mapGeomRadius(nb.kind) + 30;
+
+					if (d >= minD)
+						continue;
+
+					push = (minD - d);
+
+					if (na.kind === 'controller' && nb.kind === 'controller')
+						continue;
+
+					if (na.kind === 'controller') {
+						b.x += dx / d * push;
+						b.y += dy / d * push;
+					} else if (nb.kind === 'controller') {
+						a.x -= dx / d * push;
+						a.y -= dy / d * push;
+					} else {
+						a.x -= dx / d * push / 2;
+						a.y -= dy / d * push / 2;
+						b.x += dx / d * push / 2;
+						b.y += dy / d * push / 2;
+					}
+
+					moved = true;
+				}
+			}
+
+			if (!moved)
+				break;
+		}
+
+		Object.keys(pos).forEach(function(cid) {
+			if (byId[cid] && byId[cid].kind === 'controller')
+				return;
+
+			pos[cid].angle = Math.atan2(pos[cid].y, pos[cid].x);
+		});
+	}
+
+	separate();
+
+	function placeLabel(item) {
+		var p = pos[item.id];
+		var lines = item.lines;
+		var measured = mapGeomMeasure(lines);
+		var anchor, x, y, a, c, s;
+
+		if (item.kind === 'controller') {
+			anchor = 'middle';
+			x = p.x;
+			y = p.y + mapGeomRadius(item.kind) + 18;
+		} else if (item.kind === 'node') {
+			anchor = 'middle';
+			x = p.x;
+			y = p.y - mapGeomRadius(item.kind) - 18 - measured.h + lines[0].size;
+		} else {
+			a = Math.atan2(p.y, p.x);
+			c = Math.cos(a);
+			s = Math.sin(a);
+
+			if (Math.abs(c) >= 0.42) {
+				anchor = c > 0 ? 'start' : 'end';
+				x = p.x + c * (mapGeomRadius(item.kind) + 9);
+				y = p.y + s * 8 + lines[0].size * 0.35;
+			} else if (s >= 0) {
+				anchor = 'middle';
+				x = p.x;
+				y = p.y + mapGeomRadius(item.kind) + 16;
+			} else {
+				anchor = 'middle';
+				x = p.x;
+				y = p.y - mapGeomRadius(item.kind) - 8 - measured.h + lines[0].size;
+			}
+		}
+
+		item.label = mapGeomBox(x, y, anchor, lines);
+		item.x = p.x;
+		item.y = p.y;
+		item.r = mapGeomRadius(item.kind);
+		item.angle = p.angle;
+	}
+
+	list.forEach(function(item) {
+		if (pos[item.id])
+			placeLabel(item);
+	});
+
+	function pushLabel(item, dx, dy) {
+		var box = item.label;
+
+		box.x += dx;
+		box.y += dy;
+		box.x0 += dx;
+		box.y0 += dy;
+		box.x1 += dx;
+		box.y1 += dy;
+	}
+
+	function overlap(a, b, pad) {
+		return a.x0 < b.x1 + pad && a.x1 > b.x0 - pad && a.y0 < b.y1 + pad && a.y1 > b.y0 - pad;
+	}
+
+	function hitsCircle(box, x, y, r) {
+		var cx = Math.max(box.x0, Math.min(x, box.x1));
+		var cy = Math.max(box.y0, Math.min(y, box.y1));
+		var dx = cx - x;
+		var dy = cy - y;
+
+		return dx * dx + dy * dy < r * r;
+	}
+
+	(function separateLabels() {
+		var labeled = list.filter(function(item) { return item.label; });
+		var k, i, j, a, b, dx, dy, ox, oy, sx, sy, push;
+
+		for (k = 0; k < 56; k++) {
+			var moved = false;
+
+			for (i = 0; i < labeled.length; i++) {
+				for (j = i + 1; j < labeled.length; j++) {
+					a = labeled[i].label;
+					b = labeled[j].label;
+
+					if (!overlap(a, b, 5))
+						continue;
+
+					dx = ((b.x0 + b.x1) - (a.x0 + a.x1)) || 1;
+					dy = ((b.y0 + b.y1) - (a.y0 + a.y1)) || 0.2;
+					ox = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+					oy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+
+					if (ox < oy) {
+						sx = dx >= 0 ? 1 : -1;
+						push = ox / 2 + 4;
+						pushLabel(labeled[i], -sx * push, 0);
+						pushLabel(labeled[j], sx * push, 0);
+					} else {
+						sy = dy >= 0 ? 1 : -1;
+						push = oy / 2 + 4;
+						pushLabel(labeled[i], 0, -sy * push);
+						pushLabel(labeled[j], 0, sy * push);
+					}
+
+					moved = true;
+				}
+			}
+
+			for (i = 0; i < labeled.length; i++) {
+				for (j = 0; j < labeled.length; j++) {
+					if (!hitsCircle(labeled[i].label, labeled[j].x, labeled[j].y, labeled[j].r + 12))
+						continue;
+
+					dx = (labeled[i].label.x0 + labeled[i].label.x1) / 2 - labeled[j].x;
+					dy = (labeled[i].label.y0 + labeled[i].label.y1) / 2 - labeled[j].y;
+
+					if (mapGeomHypot(dx, dy) < 1) {
+						dx = 0;
+						dy = labeled[i].kind === 'controller' ? 1 : -1;
+					}
+
+					var len = mapGeomHypot(dx, dy) || 1;
+
+					pushLabel(labeled[i], dx / len * 7, dy / len * 7);
+					moved = true;
+				}
+			}
+
+			if (!moved)
+				break;
+		}
+	})();
+
+	var nodes = list.filter(function(item) { return !!pos[item.id]; });
+	var edges = [];
+
+	nodes.forEach(function(item) {
+		var parent, a, b, dx, dy, len, px, py, mx, my, tries, show, box, t, lx, ly;
+
+		if (!item.parent || !pos[item.parent] || !pos[item.id])
+			return;
+
+		if (item.kind !== 'client' && !item.link)
+			return;
+
+		parent = byId[item.parent];
+		a = {
+			x: pos[item.parent].x,
+			y: pos[item.parent].y
+		};
+		b = { x: pos[item.id].x, y: pos[item.id].y };
+		dx = b.x - a.x;
+		dy = b.y - a.y;
+		len = mapGeomHypot(dx, dy) || 1;
+		a = {
+			x: a.x + dx / len * (mapGeomRadius(parent.kind) + 11),
+			y: a.y + dy / len * (mapGeomRadius(parent.kind) + 11)
+		};
+		b = {
+			x: b.x - dx / len * (mapGeomRadius(item.kind) + 11),
+			y: b.y - dy / len * (mapGeomRadius(item.kind) + 11)
+		};
+		dx = b.x - a.x;
+		dy = b.y - a.y;
+		len = mapGeomHypot(dx, dy) || 1;
+		px = -dy / len;
+		py = dx / len;
+
+		if (py > 0) {
+			px = -px;
+			py = -py;
+		}
+
+		show = false;
+		lx = (a.x + b.x) / 2;
+		ly = (a.y + b.y) / 2;
+
+		if (item.metric) {
+			var mw = mapGeomTextWidth(item.metric, 11) + 8;
+			var mh = 14;
+
+			for (t = 0; t < 5; t++) {
+				var dist = 12 + t * 7;
+				var flip = t % 2 ? -1 : 1;
+
+				mx = (a.x + b.x) / 2 + px * dist * flip;
+				my = (a.y + b.y) / 2 + py * dist * flip;
+				box = {
+					x0: mx - mw / 2,
+					y0: my - 11,
+					x1: mx + mw / 2,
+					y1: my + 3
+				};
+
+				var blocked = false;
+				var n;
+
+				for (n = 0; n < nodes.length; n++) {
+					if (hitsCircle(box, nodes[n].x, nodes[n].y, nodes[n].r + 4) ||
+						(nodes[n].label && overlap(box, nodes[n].label, 2))) {
+						blocked = true;
+						break;
+					}
+				}
+
+				if (!blocked) {
+					show = true;
+					lx = mx;
+					ly = my;
+					break;
+				}
+			}
+		}
+
+		edges.push({
+			from: item.parent,
+			to: item.id,
+			kind: item.link || (item.kind === 'client' ? 'wifi' : ''),
+			metric: show ? item.metric : '',
+			metricKind: show ? item.metricKind : '',
+			x1: a.x,
+			y1: a.y,
+			x2: b.x,
+			y2: b.y,
+			lx: lx,
+			ly: ly,
+			active: !!item.active
+		});
+	});
+
+	var bounds = null;
+
+	function grow(x, y) {
+		if (!bounds) {
+			bounds = { x0: x, y0: y, x1: x, y1: y };
+			return;
+		}
+
+		bounds.x0 = Math.min(bounds.x0, x);
+		bounds.y0 = Math.min(bounds.y0, y);
+		bounds.x1 = Math.max(bounds.x1, x);
+		bounds.y1 = Math.max(bounds.y1, y);
+	}
+
+	nodes.forEach(function(item) {
+		grow(item.x - item.r, item.y - item.r);
+		grow(item.x + item.r, item.y + item.r);
+
+		if (item.label) {
+			grow(item.label.x0, item.label.y0);
+			grow(item.label.x1, item.label.y1);
+		}
+	});
+	edges.forEach(function(edge) {
+		grow(edge.x1, edge.y1);
+		grow(edge.x2, edge.y2);
+
+		if (edge.metric)
+			grow(edge.lx, edge.ly);
+	});
+
+	if (!bounds)
+		bounds = { x0: -80, y0: -80, x1: 80, y1: 80 };
+
+	return {
+		nodes: nodes,
+		edges: edges,
+		bounds: bounds
+	};
+}
+
+function mapGeomFit(w, h, bounds) {
+	var pad = 32;
+	var bw = Math.max(40, bounds.x1 - bounds.x0);
+	var bh = Math.max(40, bounds.y1 - bounds.y0);
+	var k = Math.min((w - pad * 2) / bw, (h - pad * 2) / bh);
+
+	if (!isFinite(k) || k <= 0)
+		k = 1;
+
+	k = Math.max(0.12, Math.min(k, 2.5));
+
+	return {
+		k: k,
+		x: (w - bw * k) / 2 - bounds.x0 * k,
+		y: (h - bh * k) / 2 - bounds.y0 * k
+	};
+}
+/* mapgeom-end */
+
 function svgEl(tag, attrs, children) {
 	var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
 	var key;
@@ -1169,527 +1889,842 @@ function svgEl(tag, attrs, children) {
 	return el;
 }
 
-function ri(n) {
-	return Math.round(n);
-}
+function mapOverlayTop() {
+	var header, rect;
 
-function mapRim(x, y, tx, ty, r) {
-	var dx = tx - x;
-	var dy = ty - y;
-	var len = Math.sqrt(dx * dx + dy * dy) || 1;
+	try {
+		header = document.querySelector('header');
 
-	return { x: x + dx / len * r, y: y + dy / len * r };
-}
+		if (!header)
+			return 0;
 
-function mapEdge(svg, x1, y1, x2, y2, kind, label) {
-	var dx = x2 - x1;
-	var dy = y2 - y1;
-	var len = Math.sqrt(dx * dx + dy * dy) || 1;
-	var px = -dy / len;
-	var py = dx / len;
-	var mx, my;
-
-	if (py > 0) {
-		px = -px;
-		py = -py;
+		rect = header.getBoundingClientRect();
+		return Math.max(0, Math.round(rect.bottom));
+	} catch (e) {
+		return 0;
 	}
+}
 
-	mx = x1 + dx * 0.5 + px * 13;
-	my = y1 + dy * 0.5 + py * 13;
-	var cls = 'roamd-map-edge' + (kind === 'wifi' ? ' roamd-map-edge-radio' : ' roamd-map-edge-cable');
-	var tw;
+function mapReduceMotion() {
+	try {
+		return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+	} catch (e) {
+		return false;
+	}
+}
 
-	svg.appendChild(svgEl('line', {
-		'class': cls,
-		x1: ri(x1),
-		y1: ri(y1),
-		x2: ri(x2),
-		y2: ri(y2)
-	}));
+/* Bridge throughput is kbit/s from the daemon. Both fields are absent until two samples exist. */
+function mapBridgeSpeed(src) {
+	var rx, tx, parts;
 
-	if (!label)
+	if (!src || src.rx_kbps == null || src.tx_kbps == null)
+		return '';
+
+	rx = Number(src.rx_kbps);
+	tx = Number(src.tx_kbps);
+	parts = [];
+
+	if (isFinite(rx) && rx > 0)
+		parts.push('↓' + formatMbps(rx));
+
+	if (isFinite(tx) && tx > 0)
+		parts.push('↑' + formatMbps(tx));
+
+	if (!parts.length)
+		return '';
+
+	return parts.join(' ') + ' ' + _('Mbit/s');
+}
+
+/* iwinfo PHY rate, kbit/s. Idle clients still report it; it is not a traffic counter. */
+function mapPhySpeed(rate) {
+	var n = Number(rate);
+
+	if (!isFinite(n) || n <= 0)
+		return '';
+
+	return '%d %s'.format(Math.round(n / 1000), _('Mbit/s'));
+}
+
+function mapBridgeActive(src) {
+	if (!src || src.rx_kbps == null || src.tx_kbps == null)
+		return false;
+
+	return Number(src.rx_kbps) > 0 || Number(src.tx_kbps) > 0;
+}
+
+function noteClientTraffic(cache) {
+	var bytes = {};
+	var macs = {};
+
+	if (!cache || cache.failed)
 		return;
 
-	tw = Math.round(label.length * 6.6 + 10);
-	svg.appendChild(svgEl('rect', {
-		'class': 'roamd-map-edge-label-bg',
-		x: ri(mx - tw / 2),
-		y: ri(my - 8),
-		width: tw,
-		height: 16,
-		rx: 3
-	}));
-	svg.appendChild(svgEl('text', {
-		'class': 'roamd-map-edge-label' + (kind === 'wifi' ? ' roamd-map-edge-label-radio' : ''),
-		x: ri(mx),
-		y: ri(my + 4),
-		'text-anchor': 'middle'
-	}, [ label ]));
-}
+	if (cache.stamp && cache.stamp === mapLive.stamp)
+		return;
 
-function mapNodeRadius(kind) {
-	if (kind === 'controller')
-		return 16;
+	(cache.clients || []).forEach(function(c) {
+		var key, rx, tx, prev;
 
-	if (kind === 'client')
-		return 7;
-
-	return 11;
-}
-
-function mapTextWidth(text) {
-	return Math.min(String(text || '').length, 40) * 7.1;
-}
-
-function mapLabelLines(name) {
-	var text = String(name || '');
-	var parts, best, score, i, left, right, diff;
-
-	if (text.length <= 16)
-		return [ text ];
-
-	parts = text.split(/\s+/);
-	if (parts.length < 2)
-		return [ text ];
-
-	best = 1;
-	score = 1e9;
-
-	for (i = 1; i < parts.length; i++) {
-		left = parts.slice(0, i).join(' ');
-		right = parts.slice(i).join(' ');
-		diff = Math.abs(left.length - right.length);
-		if (diff < score) {
-			score = diff;
-			best = i;
-		}
-	}
-
-	return [ parts.slice(0, best).join(' '), parts.slice(best).join(' ') ];
-}
-
-function mapAngDiff(a, b) {
-	var d = a - b;
-
-	while (d > Math.PI)
-		d -= Math.PI * 2;
-
-	while (d < -Math.PI)
-		d += Math.PI * 2;
-
-	return d;
-}
-
-function mapLabelAt(p, r, lines, angles) {
-	var angs = [];
-	var width = 0;
-	var best = null;
-	var i, a0, a1, span, mid, half, guard, dist, box, k, anchor;
-
-	lines = lines && lines.length ? lines : [ '' ];
-	lines.forEach(function(line) {
-		width = Math.max(width, mapTextWidth(line));
-	});
-
-	(angles || []).forEach(function(a) {
-		if (a == null || isNaN(a))
+		if (!c || !c.mac)
 			return;
 
-		angs.push(a);
+		key = String(c.mac).toLowerCase();
+		rx = Number(c.rx_bytes);
+		tx = Number(c.tx_bytes);
+
+		if (!isFinite(rx))
+			rx = 0;
+
+		if (!isFinite(tx))
+			tx = 0;
+
+		prev = mapLive.bytes[key];
+
+		if (prev && (rx > prev.rx || tx > prev.tx))
+			macs[key] = true;
+
+		bytes[key] = { rx: rx, tx: tx };
 	});
-	angs.sort(function(a, b) { return a - b; });
 
-	if (!angs.length)
-		angs.push((p.angle || 0) + Math.PI);
+	mapLive.stamp = cache.stamp || '';
+	mapLive.bytes = bytes;
+	mapLive.macs = macs;
+}
 
-	for (i = 0; i < angs.length; i++) {
-		a0 = angs[i];
-		a1 = angs[(i + 1) % angs.length];
-		span = (i === angs.length - 1) ? (a1 + Math.PI * 2 - a0) : (a1 - a0);
-		if (!best || span > best.span)
-			best = { span: span, mid: a0 + span / 2 };
-	}
+function mapRecentMotion(state) {
+	var now = Date.now() / 1000;
+	var nodes = {};
+	var macs = {};
 
-	mid = best.mid;
-	half = best.span / 2;
-	guard = Math.max(0.15, half - 0.18);
-	anchor = Math.abs(Math.cos(mid)) >= 0.62 ? (Math.cos(mid) > 0 ? 'start' : 'end') : 'middle';
+	(state.members || []).forEach(function(m) {
+		(m.events || []).forEach(function(ev) {
+			var age;
 
-	function boxAt(d) {
-		var cx = Math.cos(mid) * d;
-		var cy = Math.sin(mid) * d;
-		var y = cy + 4 - (lines.length - 1) * 7.5;
-		var left = cx - width / 2;
-		var right = cx + width / 2;
+			if (!ev || ev.ts == null)
+				return;
 
-		if (anchor === 'start') {
-			left = cx;
-			right = cx + width;
-		} else if (anchor === 'end') {
-			left = cx - width;
-			right = cx;
-		}
+			if (ev.type !== 'roam' && ev.type !== 'steer')
+				return;
 
-		return {
-			left: left,
-			right: right,
-			top: y - 13,
-			bot: y + (lines.length - 1) * 15 + 3,
-			x: cx,
-			y: y
+			age = now - Number(ev.ts);
+
+			if (!isFinite(age) || age < 0 || age > 20)
+				return;
+
+			if (m && m.id)
+				nodes[m.id] = true;
+
+			if (ev.to_node)
+				nodes[ev.to_node] = true;
+
+			if (ev.from_node)
+				nodes[ev.from_node] = true;
+
+			if (ev.mac)
+				macs[String(ev.mac).toLowerCase()] = true;
+		});
+	});
+
+	return { nodes: nodes, macs: macs };
+}
+
+function mapLegend() {
+	function sample(dashed, label) {
+		var line = {
+			x1: 0, y1: 6, x2: 34, y2: 6,
+			stroke: dashed ? MAP_THEME.radio : MAP_THEME.cable,
+			'stroke-width': 2,
+			fill: 'none'
 		};
+		var svg = svgEl('svg', {
+			'width': 36,
+			'height': 12,
+			'viewBox': '0 0 36 12',
+			'aria-hidden': 'true'
+		});
+		var span;
+
+		if (dashed)
+			line['stroke-dasharray'] = '5 4';
+
+		svg.appendChild(svgEl('line', line));
+		svg.style.display = 'block';
+		svg.style.flex = '0 0 auto';
+		span = E('span', {
+			'style': 'display:inline-flex;align-items:center;gap:8px'
+		}, [ label ]);
+		span.insertBefore(svg, span.firstChild);
+		return span;
 	}
 
-	function clear(b) {
-		var corners = [
-			[ b.left, b.top ],
-			[ b.right, b.top ],
-			[ b.left, b.bot ],
-			[ b.right, b.bot ]
-		];
-		var n, dx, dy, ang;
+	return E('div', {
+		'style': 'position:absolute;top:10px;left:14px;z-index:2;display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;color:#d5d8de;font-size:13px;pointer-events:none'
+	}, [
+		sample(false, _('Cable')),
+		sample(true, _('Radio'))
+	]);
+}
 
-		for (n = 0; n < corners.length; n++) {
-			dx = corners[n][0];
-			dy = corners[n][1];
-			if (Math.sqrt(dx * dx + dy * dy) < r + 8)
-				return false;
-
-			ang = Math.atan2(dy, dx);
-			if (half < Math.PI - 0.05 && Math.abs(mapAngDiff(ang, mid)) > guard)
-				return false;
+function mapZoomButton(label, title, fn) {
+	return E('button', {
+		'type': 'button',
+		'class': 'btn cbi-button',
+		'title': title,
+		'aria-label': title,
+		'style': 'min-width:2.4rem;padding:0 .55rem',
+		'click': function(ev) {
+			ev.preventDefault();
+			fn();
 		}
+	}, label);
+}
 
+function mapApplyCam(world) {
+	if (!world)
+		return;
+
+	world.setAttribute('transform',
+		'translate(' + mapCam.x + ' ' + mapCam.y + ') scale(' + mapCam.k + ')');
+}
+
+function mapFitCam(w, h, bounds) {
+	var fit = mapGeomFit(w, h, bounds || { x0: -80, y0: -80, x1: 80, y1: 80 });
+
+	mapCam.k = fit.k;
+	mapCam.x = fit.x;
+	mapCam.y = fit.y;
+	mapCam.w = w;
+	mapCam.h = h;
+}
+
+function bindMapStage(overlay) {
+	var stage = overlay.querySelector('.roamd-map-stage');
+	var svg = overlay.querySelector('.roamd-map-svg');
+	var world = overlay.querySelector('.roamd-map-world');
+	var bounds = overlay._bounds;
+	var ptr = null;
+
+	if (!stage || !svg || !world)
+		return;
+
+	if (mapObserver) {
+		mapObserver.disconnect();
+		mapObserver = null;
+	}
+
+	function size() {
+		var w = stage.clientWidth || mapCam.w || 0;
+		var h = stage.clientHeight || mapCam.h || 0;
+
+		if (w < 40 || h < 40)
+			return false;
+
+		svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+		mapCam.w = w;
+		mapCam.h = h;
 		return true;
 	}
 
-	dist = r + 18;
-	box = boxAt(dist);
+	function fit() {
+		if (!size())
+			return;
 
-	for (k = 0; k < 24 && !clear(box); k++) {
-		dist += 4;
-		box = boxAt(dist);
+		mapFitCam(mapCam.w, mapCam.h, bounds);
+		mapApplyCam(world);
 	}
 
-	return {
-		x: p.x + box.x,
-		y: p.y + box.y,
-		anchor: anchor,
-		lines: lines,
-		x0: p.x + box.left,
-		y0: p.y + box.top,
-		x1: p.x + box.right,
-		y1: p.y + box.bot
+	function zoomAt(factor, cx, cy) {
+		var wx, wy, nk;
+
+		if (!size())
+			return;
+
+		nk = Math.max(0.15, Math.min(4, mapCam.k * factor));
+		wx = (cx - mapCam.x) / mapCam.k;
+		wy = (cy - mapCam.y) / mapCam.k;
+		mapCam.k = nk;
+		mapCam.x = cx - wx * nk;
+		mapCam.y = cy - wy * nk;
+		mapCam.user = true;
+		mapApplyCam(world);
+	}
+
+	overlay._zoom = function(factor) {
+		zoomAt(factor, (stage.clientWidth || 0) / 2, (stage.clientHeight || 0) / 2);
 	};
-}
+	overlay._fit = function() {
+		mapCam.user = false;
+		fit();
+	};
 
-function drawGraphNode(svg, spec, state) {
-	var p = spec.pos;
-	var r = mapNodeRadius(spec.kind);
-	var g = svgEl('g', {
-		'class': 'roamd-map-node' +
-			(spec.kind === 'controller' ? ' roamd-map-node-controller' : '') +
-			(spec.kind === 'client' ? ' roamd-map-node-client' : '') +
-			(spec.online ? '' : ' roamd-map-node-off') +
-			(spec.unknown ? ' roamd-map-node-unknown' : '')
-	});
-	var label = spec.label;
-	var halo = spec.kind === 'controller' ? 'controller' : (spec.kind === 'client' ? 'client' : 'router');
-	var text;
+	function nodeKey(target) {
+		var el = target;
 
-	g.appendChild(svgEl('title', {}, [ spec.tip || spec.name ]));
-	g.appendChild(svgEl('circle', {
-		'class': 'roamd-map-halo roamd-map-halo-' + halo,
-		cx: ri(p.x),
-		cy: ri(p.y),
-		r: r + 7
-	}));
+		while (el && el !== stage) {
+			if (el.getAttribute && el.getAttribute('data-key'))
+				return el.getAttribute('data-key');
 
-	if (spec.kind === 'controller')
-		g.appendChild(svgEl('polygon', {
-			'class': 'roamd-map-star' + (spec.online ? '' : ' roamd-map-off'),
-			points: starPoints(p.x, p.y, r, r * 0.42, 5)
-		}));
-	else
-		g.appendChild(svgEl('circle', {
-			'class': (spec.kind === 'client' ? 'roamd-map-client' : 'roamd-map-router') +
-				(spec.online ? '' : ' roamd-map-off'),
-			cx: ri(p.x),
-			cy: ri(p.y),
-			r: r
-		}));
+			el = el.parentNode;
+		}
 
-	text = svgEl('text', {
-		'class': 'roamd-map-label',
-		x: ri(label.x),
-		y: ri(label.y),
-		'text-anchor': label.anchor
-	});
-	(label.lines || [ spec.name ]).forEach(function(line, i) {
-		text.appendChild(svgEl('tspan', {
-			x: ri(label.x),
-			dy: i ? 15 : 0
-		}, [ line ]));
-	});
-	g.appendChild(text);
-
-	if (spec.kind === 'controller' || spec.member) {
-		g.setAttribute('class', g.getAttribute('class') + ' roamd-map-node-btn');
-		g.addEventListener('click', function() {
-			if (spec.kind === 'controller')
-				controllerDialog(state);
-			else
-				nodeDialog(spec.member, state, refreshNodes);
-		});
-	} else if (spec.kind === 'client') {
-		g.setAttribute('class', g.getAttribute('class') + ' roamd-map-node-btn');
-		g.addEventListener('click', function(ev) {
-			ev.preventDefault();
-			openClients(spec.parent || '');
-		});
+		return '';
 	}
 
-	svg.appendChild(g);
+	function onWheel(ev) {
+		ev.preventDefault();
+		zoomAt(ev.deltaY < 0 ? 1.12 : 1 / 1.12,
+			ev.clientX - stage.getBoundingClientRect().left,
+			ev.clientY - stage.getBoundingClientRect().top);
+	}
+
+	try {
+		stage.addEventListener('wheel', onWheel, { passive: false });
+	} catch (e) {
+		stage.addEventListener('wheel', onWheel);
+	}
+
+	stage.addEventListener('pointerdown', function(ev) {
+		if (ev.button != null && ev.button !== 0)
+			return;
+
+		ptr = {
+			id: ev.pointerId,
+			x: ev.clientX,
+			y: ev.clientY,
+			ox: mapCam.x,
+			oy: mapCam.y,
+			moved: false,
+			key: nodeKey(ev.target)
+		};
+		stage.style.cursor = 'grabbing';
+
+		try {
+			stage.setPointerCapture(ev.pointerId);
+		} catch (e) {}
+	});
+
+	stage.addEventListener('pointermove', function(ev) {
+		var dx, dy;
+
+		if (!ptr || ev.pointerId !== ptr.id)
+			return;
+
+		dx = ev.clientX - ptr.x;
+		dy = ev.clientY - ptr.y;
+
+		if (!ptr.moved && dx * dx + dy * dy < 36)
+			return;
+
+		ptr.moved = true;
+		mapCam.user = true;
+		mapCam.x = ptr.ox + dx;
+		mapCam.y = ptr.oy + dy;
+		mapApplyCam(world);
+	});
+
+	function endPtr(ev) {
+		var key, moved, extra;
+
+		if (!ptr || (ev && ev.pointerId !== ptr.id))
+			return;
+
+		key = ptr.key;
+		moved = ptr.moved;
+		ptr = null;
+		stage.style.cursor = 'grab';
+
+		if (moved || !key)
+			return;
+
+		extra = overlay._extras && overlay._extras[key];
+
+		if (!extra)
+			return;
+
+		if (extra.kind === 'controller')
+			controllerDialog(overlay._state);
+		else if (extra.member)
+			nodeDialog(extra.member, overlay._state, refreshNodes);
+		else if (extra.client)
+			openClients(extra.parent || '');
+	}
+
+	stage.addEventListener('pointerup', endPtr);
+	stage.addEventListener('pointercancel', endPtr);
+
+	if (typeof ResizeObserver !== 'undefined') {
+		mapObserver = new ResizeObserver(function() {
+			if (!size())
+				return;
+
+			if (!mapCam.user)
+				fit();
+			else
+				mapApplyCam(world);
+		});
+		mapObserver.observe(stage);
+	}
+
+	if (size()) {
+		if (!mapCam.user)
+			fit();
+		else
+			mapApplyCam(world);
+	}
 }
 
-function renderMeshMap(state) {
+function scheduleMapBind(overlay) {
+	var seq = ++mapBindSeq;
+
+	setTimeout(function() {
+		var live;
+
+		if (seq !== mapBindSeq)
+			return;
+
+		live = document.getElementById('roamd-map-overlay');
+
+		if (live)
+			bindMapStage(live);
+	}, 0);
+}
+
+function mapPaint(scene, extras, state) {
+	var bounds = scene.bounds;
+	var width = mapCam.w || 800;
+	var height = mapCam.h || 600;
+	var svg, defs, world, motion;
+
+	if (!mapCam.user && mapCam.w && mapCam.h)
+		mapFitCam(width, height, bounds);
+
+	motion = !mapReduceMotion();
+	svg = svgEl('svg', {
+		'class': 'roamd-map-svg',
+		'width': '100%',
+		'height': '100%',
+		'viewBox': '0 0 ' + width + ' ' + height,
+		'role': 'img',
+		'aria-label': _('Map'),
+		'style': 'position:absolute;inset:0;display:block;touch-action:none'
+	});
+	defs = svgEl('defs', {});
+	defs.appendChild(svgEl('marker', {
+		'id': 'roamd-arrow-cable',
+		'viewBox': '0 0 8 8',
+		'markerWidth': 9,
+		'markerHeight': 9,
+		'refX': 6,
+		'refY': 4,
+		'orient': 'auto',
+		'markerUnits': 'userSpaceOnUse'
+	}, [ svgEl('path', { d: 'M0,1 L7,4 L0,7 Z', fill: MAP_THEME.cable }) ]));
+	defs.appendChild(svgEl('marker', {
+		'id': 'roamd-arrow-radio',
+		'viewBox': '0 0 8 8',
+		'markerWidth': 9,
+		'markerHeight': 9,
+		'refX': 6,
+		'refY': 4,
+		'orient': 'auto',
+		'markerUnits': 'userSpaceOnUse'
+	}, [ svgEl('path', { d: 'M0,1 L7,4 L0,7 Z', fill: MAP_THEME.radio }) ]));
+	svg.appendChild(defs);
+	world = svgEl('g', { 'class': 'roamd-map-world' });
+	mapApplyCam(world);
+
+	scene.edges.forEach(function(edge) {
+		var radio = edge.kind === 'wifi';
+		var stroke = radio ? MAP_THEME.radio : MAP_THEME.cable;
+		var line = {
+			x1: Math.round(edge.x1 * 10) / 10,
+			y1: Math.round(edge.y1 * 10) / 10,
+			x2: Math.round(edge.x2 * 10) / 10,
+			y2: Math.round(edge.y2 * 10) / 10,
+			fill: 'none',
+			stroke: stroke,
+			'stroke-width': 1.6,
+			'stroke-linecap': 'butt',
+			'vector-effect': 'non-scaling-stroke',
+			'marker-end': radio ? 'url(#roamd-arrow-radio)' : 'url(#roamd-arrow-cable)',
+			'pointer-events': 'none'
+		};
+		var textFill = MAP_THEME.metric;
+
+		if (radio)
+			line['stroke-dasharray'] = '6 5';
+
+		if (edge.metricKind === 'dbm')
+			textFill = MAP_THEME.metricRadio;
+		else if (edge.metricKind === 'speed')
+			textFill = '#d7e4f5';
+
+		world.appendChild(svgEl('line', line));
+
+		if (edge.metric) {
+			world.appendChild(svgEl('text', {
+				x: Math.round(edge.lx),
+				y: Math.round(edge.ly),
+				'text-anchor': 'middle',
+				fill: textFill,
+				'font-size': 11,
+				'font-family': 'sans-serif',
+				'pointer-events': 'none'
+			}, [ edge.metric ]));
+		}
+
+		if (edge.active && motion) {
+			var dot = svgEl('circle', {
+				r: 2.5,
+				fill: '#f7f4ea',
+				stroke: 'none',
+				'pointer-events': 'none'
+			});
+
+			dot.appendChild(svgEl('animate', {
+				attributeName: 'cx',
+				values: line.x1 + ';' + line.x2,
+				dur: '1.6s',
+				repeatCount: 'indefinite'
+			}));
+			dot.appendChild(svgEl('animate', {
+				attributeName: 'cy',
+				values: line.y1 + ';' + line.y2,
+				dur: '1.6s',
+				repeatCount: 'indefinite'
+			}));
+			world.appendChild(dot);
+		}
+	});
+
+	scene.nodes.forEach(function(spec) {
+		var fill = MAP_THEME.node;
+		var stroke = MAP_THEME.nodeStroke;
+		var halo = MAP_THEME.haloN;
+		var g, hit;
+
+		if (spec.kind === 'controller') {
+			fill = MAP_THEME.star;
+			stroke = MAP_THEME.starStroke;
+			halo = MAP_THEME.haloC;
+		} else if (spec.kind === 'client') {
+			fill = spec.unknown ? MAP_THEME.unknown : MAP_THEME.client;
+			stroke = MAP_THEME.clientStroke;
+			halo = MAP_THEME.haloK;
+		}
+
+		if (!spec.online && !spec.unknown)
+			fill = MAP_THEME.off;
+
+		g = svgEl('g', {
+			'class': 'roamd-map-node',
+			'data-key': spec.id,
+			'style': 'cursor:pointer'
+		});
+		g.appendChild(svgEl('title', {}, [ (extras[spec.id] && extras[spec.id].tip) || spec.name || spec.mac || spec.id ]));
+		halo = svgEl('circle', {
+			cx: Math.round(spec.x),
+			cy: Math.round(spec.y),
+			r: spec.r + 8,
+			fill: halo,
+			stroke: 'none'
+		});
+
+		if (spec.active && motion) {
+			halo.appendChild(svgEl('animate', {
+				attributeName: 'opacity',
+				values: '0.45;1;0.45',
+				dur: '1.8s',
+				repeatCount: 'indefinite'
+			}));
+		}
+
+		g.appendChild(halo);
+
+		if (spec.kind === 'controller')
+			g.appendChild(svgEl('polygon', {
+				points: mapGeomStar(spec.x, spec.y, spec.r, spec.r * 0.42, 5),
+				fill: fill,
+				stroke: stroke,
+				'stroke-width': 1
+			}));
+		else
+			g.appendChild(svgEl('circle', {
+				cx: Math.round(spec.x),
+				cy: Math.round(spec.y),
+				r: spec.r,
+				fill: fill,
+				stroke: stroke,
+				'stroke-width': 1.25
+			}));
+
+		(function drawLabel() {
+			var label = spec.label;
+			var text;
+
+			if (!label)
+				return;
+
+			text = svgEl('text', {
+				x: Math.round(label.x),
+				y: Math.round(label.y),
+				'text-anchor': label.anchor || 'middle',
+				'font-family': 'sans-serif'
+			});
+			(label.lines || []).forEach(function(line, i) {
+				text.appendChild(svgEl('tspan', {
+					x: Math.round(label.x),
+					dy: i ? (label.lines[i - 1].size + 3) : 0,
+					'font-size': line.size,
+					'font-weight': line.weight || 400,
+					fill: line.fill
+				}, [ line.text ]));
+			});
+			g.appendChild(text);
+		})();
+
+		hit = Math.max(spec.r + 10, 16);
+		g.appendChild(svgEl('circle', {
+			cx: Math.round(spec.x),
+			cy: Math.round(spec.y),
+			r: hit,
+			fill: 'transparent',
+			stroke: 'none'
+		}));
+		world.appendChild(g);
+	});
+
+	svg.appendChild(world);
+	return svg;
+}
+
+function renderMeshMap(state, chrome) {
 	var show = !!(mapShowClients && mapClientCache && !mapClientCache.failed);
 	var graph = meshMapGraph(state);
 	var byNode = show ? mapClientsByNode(state) : {};
-	var info = {};
-	var self = state.self || {};
-	var raw, specs, bounds, width, height, dx, dy, svg;
 	var hints = (mapClientCache && mapClientCache.hints) || {};
 	var ov = (mapClientCache && mapClientCache.ov) || {};
+	var self = state.self || {};
+	var motion = mapRecentMotion(state);
+	var items = [];
+	var extras = {};
+	var known = {};
+	var scene, sig, top, overlay, stage, bar;
+
+	chrome = chrome || {};
 
 	if (mapShowClients)
 		ensureMapClients();
 
-	info.controller = {
+	noteClientTraffic(mapClientCache);
+
+	items.push({
 		id: 'controller',
-		name: state.controller_name || self.hostname || _('This device'),
 		kind: 'controller',
-		online: true
+		parent: '',
+		name: state.controller_name || self.hostname || _('This device'),
+		mac: self.mac || '',
+		online: true,
+		unknown: false,
+		link: '',
+		metric: '',
+		metricKind: '',
+		active: mapBridgeActive(self) || !!motion.nodes.controller
+	});
+	extras.controller = {
+		kind: 'controller',
+		tip: items[0].name
 	};
+	known.controller = true;
 
 	(state.members || []).forEach(function(m) {
+		var orphan, speed, parent, link, dbm, metric, kind;
+
 		if (!m || !m.id || m.id === 'controller')
 			return;
 
-		info[m.id] = {
+		orphan = (graph.orphans || []).indexOf(m.id) >= 0;
+		parent = orphan ? '' : (graph.parentOf[m.id] || '');
+		link = orphan ? '' : (m.connection === 'wifi' ? 'wifi' : (m.connection === 'wired' ? 'wired' : ''));
+		dbm = link === 'wifi' ? mapUplinkRssi(m) : null;
+		speed = mapBridgeSpeed(m);
+		metric = speed || (link ? mapEdgeMetric(link, dbm) : '');
+		kind = speed ? 'speed' : (link === 'wifi' && dbm ? 'dbm' : (metric ? 'dash' : ''));
+		items.push({
 			id: m.id,
-			name: m.name || m.hostname || m.id,
 			kind: 'node',
+			parent: parent,
+			name: m.name || m.hostname || m.id,
+			mac: m.mac || '',
 			online: !!m.online,
+			unknown: false,
+			link: link,
+			metric: metric,
+			metricKind: kind,
+			active: mapBridgeActive(m) || !!motion.nodes[m.id]
+		});
+		extras[m.id] = {
+			kind: 'node',
 			member: m,
-			orphan: (graph.orphans || []).indexOf(m.id) >= 0
+			tip: (m.name || m.hostname || m.id) + (speed ? ' · ' + speed : '')
 		};
+		known[m.id] = true;
 	});
 
 	if (show) {
-		Object.keys(byNode).forEach(function(id) {
-			if (info[id])
+		Object.keys(byNode).forEach(function(pid) {
+			if (known[pid])
 				return;
 
-			info[id] = {
-				id: id,
-				name: id,
+			items.push({
+				id: pid,
 				kind: 'node',
+				parent: '',
+				name: pid,
+				mac: '',
 				online: true,
-				member: null,
-				orphan: true
-			};
-			graph.orphans.push(id);
+				unknown: false,
+				link: '',
+				metric: '',
+				metricKind: '',
+				active: !!motion.nodes[pid]
+			});
+			extras[pid] = { kind: 'node', tip: pid };
+			known[pid] = true;
+		});
+
+		Object.keys(byNode).forEach(function(pid) {
+			(byNode[pid] || []).forEach(function(c) {
+				var parts = mapClientParts(c, hints, ov);
+				var link = c.wired ? 'wired' : 'wifi';
+				var dbm = link === 'wifi' ? mapClientRssi(c) : null;
+				var speed = link === 'wifi' ? mapPhySpeed(c.rate) : '';
+				var parent = known[pid] ? pid : 'controller';
+				var macKey = String(c.mac || '').toLowerCase();
+				var id = 'c:' + macKey;
+
+				items.push({
+					id: id,
+					kind: 'client',
+					parent: parent,
+					name: parts.name,
+					mac: c.mac || '',
+					online: c.state !== 'unknown',
+					unknown: c.state === 'unknown',
+					link: link,
+					metric: speed || mapEdgeMetric(link, dbm),
+					metricKind: speed ? 'speed' : (link === 'wifi' && dbm ? 'dbm' : 'dash'),
+					active: !!mapLive.macs[macKey] || !!motion.macs[macKey]
+				});
+				extras[id] = {
+					kind: 'client',
+					client: c,
+					parent: parent,
+					tip: parts.name ? '%s (%s)'.format(parts.name, c.mac) : (c.mac || '')
+				};
+			});
 		});
 	}
 
-	raw = layoutRadial(graph, show ? byNode : {});
-	specs = [];
+	scene = mapGeomLayout(items);
+	sig = items.map(function(it) {
+		return [ it.id, it.parent, it.kind, it.name, it.mac, it.link ].join(':');
+	}).join('|');
 
-	Object.keys(raw).forEach(function(key) {
-		var p = raw[key];
-		var spec, name;
-
-		if (p.client) {
-			name = mapClientLabel(p.client, hints, ov);
-			spec = {
-				key: key,
-				pos: p,
-				kind: 'client',
-				name: name,
-				client: p.client,
-				online: p.client.state !== 'unknown',
-				unknown: p.client.state === 'unknown',
-				parent: p.parent,
-				tip: name === p.client.mac ? p.client.mac : '%s (%s)'.format(name, p.client.mac)
-			};
-			specs.push(spec);
-			return;
-		}
-
-		if (!info[key])
-			return;
-
-		spec = {
-			key: key,
-			pos: p,
-			kind: info[key].kind === 'controller' ? 'controller' : 'node',
-			name: info[key].name,
-			online: info[key].kind === 'controller' ? true : !!info[key].online,
-			member: info[key].member || null,
-			tip: info[key].orphan ? '%s, %s'.format(info[key].name, _('Parent unknown')) : info[key].name
-		};
-		specs.push(spec);
-	});
-
-	function linkOf(target) {
-		var member = info[target] && info[target].member;
-		var kind = member && member.connection === 'wifi' ? 'wifi'
-			: (member && member.connection === 'wired' ? 'wired' : '');
-
-		return { kind: kind, dbm: mapUplinkRssi(member) };
+	if (mapCam.sig !== sig) {
+		mapCam.sig = sig;
+		mapCam.user = false;
 	}
 
-	bounds = { minX: 0, minY: 0, maxX: 0, maxY: 0, any: false };
+	top = mapOverlayTop();
 
-	function grow(x, y) {
-		if (!bounds.any) {
-			bounds.minX = bounds.maxX = x;
-			bounds.minY = bounds.maxY = y;
-			bounds.any = true;
-			return;
-		}
+	if (chrome.addButton && chrome.addButton.style)
+		chrome.addButton.style.marginLeft = 'auto';
 
-		bounds.minX = Math.min(bounds.minX, x);
-		bounds.minY = Math.min(bounds.minY, y);
-		bounds.maxX = Math.max(bounds.maxX, x);
-		bounds.maxY = Math.max(bounds.maxY, y);
-	}
+	bar = E('div', {
+		'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:8px 12px;background:#fff;border-bottom:1px solid #d5d5d5'
+	}, [
+		chrome.lead || '',
+		nodesViewSwitch(),
+		mapClientSwitch(),
+		mapClientStatus(),
+		mapZoomButton('+', _('Zoom in'), function() {
+			var live = document.getElementById('roamd-map-overlay');
 
-	function linked(a, b) {
-		if (!a || !b)
-			return;
+			if (live && live._zoom)
+				live._zoom(1.2);
+		}),
+		mapZoomButton('−', _('Zoom out'), function() {
+			var live = document.getElementById('roamd-map-overlay');
 
-		if (!a._nbrs)
-			a._nbrs = [];
+			if (live && live._zoom)
+				live._zoom(1 / 1.2);
+		}),
+		mapZoomButton(_('Show all'), _('Show all'), function() {
+			var live = document.getElementById('roamd-map-overlay');
 
-		if (!b._nbrs)
-			b._nbrs = [];
-
-		a._nbrs.push(Math.atan2(b.pos.y - a.pos.y, b.pos.x - a.pos.x));
-		b._nbrs.push(Math.atan2(a.pos.y - b.pos.y, a.pos.x - b.pos.x));
-	}
-
-	function specBy(key) {
-		var i;
-
-		for (i = 0; i < specs.length; i++)
-			if (specs[i].key === key)
-				return specs[i];
-
-		return null;
-	}
-
-	Object.keys(graph.children || {}).forEach(function(pid) {
-		(graph.children[pid] || []).forEach(function(cid) {
-			linked(specBy(pid), specBy(cid));
-		});
-	});
-	specs.forEach(function(spec) {
-		if (spec.kind === 'client')
-			linked(spec, specBy(spec.parent));
-	});
-	specs.forEach(function(spec) {
-		spec.label = mapLabelAt(spec.pos, mapNodeRadius(spec.kind), mapLabelLines(spec.name), spec._nbrs || []);
-		grow(spec.pos.x - mapNodeRadius(spec.kind), spec.pos.y - mapNodeRadius(spec.kind));
-		grow(spec.pos.x + mapNodeRadius(spec.kind), spec.pos.y + mapNodeRadius(spec.kind));
-		grow(spec.label.x0, spec.label.y0);
-		grow(spec.label.x1, spec.label.y1);
-	});
-
-	width = Math.max(680, Math.ceil(bounds.maxX - bounds.minX + MAP_PAD * 2));
-	height = Math.max(440, Math.ceil(bounds.maxY - bounds.minY + MAP_PAD * 2));
-	dx = (width - (bounds.maxX - bounds.minX)) / 2 - bounds.minX;
-	dy = (height - (bounds.maxY - bounds.minY)) / 2 - bounds.minY;
-
-	specs.forEach(function(spec) {
-		spec.pos = {
-			x: spec.pos.x + dx,
-			y: spec.pos.y + dy,
-			angle: spec.pos.angle,
-			depth: spec.pos.depth
-		};
-		spec.label.x += dx;
-		spec.label.y += dy;
-	});
-
-	function at(key) {
-		var i;
-
-		for (i = 0; i < specs.length; i++)
-			if (specs[i].key === key)
-				return specs[i];
-
-		return null;
-	}
-
-	svg = svgEl('svg', {
-		'class': 'roamd-map-svg',
-		'width': width,
-		'height': height,
-		'viewBox': '0 0 %d %d'.format(width, height),
-		'role': 'img',
-		'aria-label': _('Map')
-	});
-
-	Object.keys(graph.children || {}).forEach(function(pid) {
-		(graph.children[pid] || []).forEach(function(cid) {
-			var from = at(pid);
-			var to = at(cid);
-			var link, a, b, rr, rt;
-
-			if (!from || !to)
-				return;
-
-			link = linkOf(cid);
-			rr = mapNodeRadius(from.kind);
-			rt = mapNodeRadius(to.kind);
-			a = mapRim(from.pos.x, from.pos.y, to.pos.x, to.pos.y, rr);
-			b = mapRim(to.pos.x, to.pos.y, from.pos.x, from.pos.y, rt);
-			mapEdge(svg, a.x, a.y, b.x, b.y, link.kind, mapEdgeMetric(link.kind, link.dbm));
-		});
-	});
-
-	if (show) {
-		specs.forEach(function(spec) {
-			var parent, a, b, kind, dbm;
-
-			if (spec.kind !== 'client')
-				return;
-
-			parent = at(spec.parent);
-			if (!parent)
-				return;
-
-			kind = spec.client && spec.client.wired ? 'wired' : 'wifi';
-			dbm = kind === 'wifi' ? mapClientRssi(spec.client) : null;
-			a = mapRim(parent.pos.x, parent.pos.y, spec.pos.x, spec.pos.y, mapNodeRadius(parent.kind));
-			b = mapRim(spec.pos.x, spec.pos.y, parent.pos.x, parent.pos.y, mapNodeRadius('client'));
-			mapEdge(svg, a.x, a.y, b.x, b.y, kind, mapEdgeMetric(kind, dbm));
-		});
-	}
-
-	specs.forEach(function(spec) {
-		drawGraphNode(svg, spec, state);
-	});
-
-	return E('div', { 'class': 'roamd-map' }, [
-		E('div', { 'class': 'roamd-map-legend' }, [
-			E('span', { 'class': 'roamd-map-key roamd-map-key-cable' }, _('Cable')),
-			E('span', { 'class': 'roamd-map-key roamd-map-key-radio' }, _('Radio'))
-		]),
-		svg
+			if (live && live._fit)
+				live._fit();
+		}),
+		chrome.addButton || ''
 	]);
+
+	stage = E('div', {
+		'class': 'roamd-map-stage',
+		'style': 'position:relative;flex:1 1 auto;min-height:0;background:' + MAP_THEME.bg + ';overflow:hidden;touch-action:none;cursor:grab;user-select:none'
+	}, [
+		mapLegend(),
+		mapPaint(scene, extras, state)
+	]);
+
+	overlay = E('div', {
+		'id': 'roamd-map-overlay',
+		'style': 'position:fixed;left:0;right:0;bottom:0;z-index:790;display:flex;flex-direction:column;background:#f7f7f7;top:' + top + 'px'
+	}, [
+		E('style', {}, mapOverlayCss()),
+		chrome.deps || '',
+		chrome.running || '',
+		bar,
+		stage
+	]);
+	overlay._bounds = scene.bounds;
+	overlay._extras = extras;
+	overlay._state = state;
+	scheduleMapBind(overlay);
+	return overlay;
+}
+
+function mapClientParts(c, hints, ov) {
+	var name = '';
+
+	if (c && c.mac) {
+		try {
+			name = common.clientLabel(hints || {}, ov || {}, c.mac) || '';
+		} catch (e) {}
+	}
+
+	if (!name && c && c.host)
+		name = usableClientName(c.host, c.mac);
+	else
+		name = usableClientName(name, c && c.mac);
+
+	return { name: name || '', mac: (c && c.mac) || '' };
+}
+
+function mapOverlayCss() {
+	return '' +
+		'#roamd-map-overlay .roamd-switch{display:inline-flex;padding:2px;border:1px solid #ccc;border-radius:999px;background:#f2f2f2}' +
+		'#roamd-map-overlay .roamd-switch-opt{position:relative;margin:0;cursor:pointer}' +
+		'#roamd-map-overlay .roamd-switch-opt input{position:absolute;opacity:0;width:1px;height:1px}' +
+		'#roamd-map-overlay .roamd-switch-opt span{display:block;padding:.18rem .85rem;border-radius:999px;line-height:1.35;color:#222}' +
+		'#roamd-map-overlay .roamd-switch-opt input:checked+span{background:#1f7a34;color:#fff;font-weight:600}' +
+		'#roamd-map-overlay .roamd-switch-check{position:relative;display:inline-flex;align-items:center;gap:.45rem;margin:0;cursor:pointer;font-weight:600}' +
+		'#roamd-map-overlay .roamd-switch-check input{position:absolute;opacity:0;width:1px;height:1px}' +
+		'#roamd-map-overlay .roamd-switch-ui{display:inline-block;width:2.15rem;height:1.22rem;border-radius:999px;background:#c5c5c5;position:relative;flex:0 0 auto}' +
+		'#roamd-map-overlay .roamd-switch-ui::after{content:"";position:absolute;top:.13rem;left:.13rem;width:.96rem;height:.96rem;border-radius:50%;background:#fff}' +
+		'#roamd-map-overlay .roamd-switch-check input:checked+.roamd-switch-ui{background:#1f7a34}' +
+		'#roamd-map-overlay .roamd-switch-check input:checked+.roamd-switch-ui::after{left:1.05rem}';
 }
 
 function preferText(pref) {
