@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=roamd
-PKG_VERSION:=1.3.0-r5
+PKG_VERSION:=1.3.0-r8
 PKG_RELEASE:=
 
 PKG_LICENSE:=Apache-2.0
