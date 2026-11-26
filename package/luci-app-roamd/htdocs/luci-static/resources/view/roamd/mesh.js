@@ -742,7 +742,7 @@ function mapEdgeMetric(kind, dbm) {
 	if (kind === 'wifi' && dbm)
 		return '%d %s'.format(dbm, _('dBm'));
 
-	return '\u2014';
+	return '';
 }
 
 function parentCycle(id, parentId, parentOf) {
@@ -1894,22 +1894,6 @@ function svgEl(tag, attrs, children) {
 	return el;
 }
 
-function mapOverlayTop() {
-	var header, rect;
-
-	try {
-		header = document.querySelector('header');
-
-		if (!header)
-			return 0;
-
-		rect = header.getBoundingClientRect();
-		return Math.max(0, Math.round(rect.bottom));
-	} catch (e) {
-		return 0;
-	}
-}
-
 function mapReduceMotion() {
 	try {
 		return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -2116,8 +2100,8 @@ function bindMapStage(overlay) {
 	}
 
 	function size() {
-		var w = stage.clientWidth || mapCam.w || 0;
-		var h = stage.clientHeight || mapCam.h || 0;
+		var w = stage.clientWidth;
+		var h = stage.clientHeight;
 
 		if (w < 40 || h < 40)
 			return false;
@@ -2226,7 +2210,7 @@ function bindMapStage(overlay) {
 	});
 
 	function endPtr(ev) {
-		var key, moved, extra;
+		var key, moved;
 
 		if (!ptr || (ev && ev.pointerId !== ptr.id))
 			return;
@@ -2236,10 +2220,12 @@ function bindMapStage(overlay) {
 		ptr = null;
 		stage.style.cursor = 'grab';
 
-		if (moved || !key)
-			return;
+		if (!moved && key && ev.type === 'pointerup')
+			activateNode(key);
+	}
 
-		extra = overlay._extras && overlay._extras[key];
+	function activateNode(key) {
+		var extra = overlay._extras[key];
 
 		if (!extra)
 			return;
@@ -2254,6 +2240,14 @@ function bindMapStage(overlay) {
 
 	stage.addEventListener('pointerup', endPtr);
 	stage.addEventListener('pointercancel', endPtr);
+	stage.addEventListener('keydown', function(ev) {
+		var key = nodeKey(ev.target);
+
+		if (key && (ev.key === 'Enter' || ev.key === ' ')) {
+			ev.preventDefault();
+			activateNode(key);
+		}
+	});
 
 	if (typeof ResizeObserver !== 'undefined') {
 		mapObserver = new ResizeObserver(function() {
@@ -2292,7 +2286,7 @@ function scheduleMapBind(overlay) {
 	}, 0);
 }
 
-function mapPaint(scene, extras, state) {
+function mapPaint(scene, extras) {
 	var bounds = scene.bounds;
 	var width = mapCam.w || 800;
 	var height = mapCam.h || 600;
@@ -2307,7 +2301,7 @@ function mapPaint(scene, extras, state) {
 		'width': '100%',
 		'height': '100%',
 		'viewBox': '0 0 ' + width + ' ' + height,
-		'role': 'img',
+		'role': 'group',
 		'aria-label': _('Map'),
 		'style': 'position:absolute;inset:0;display:block;touch-action:none'
 	});
@@ -2422,7 +2416,10 @@ function mapPaint(scene, extras, state) {
 		g = svgEl('g', {
 			'class': 'roamd-map-node',
 			'data-key': spec.id,
-			'style': 'cursor:pointer'
+			'role': extras[spec.id].actionable ? 'button' : null,
+			'tabindex': extras[spec.id].actionable ? 0 : null,
+			'aria-label': extras[spec.id].actionable ? extras[spec.id].tip : null,
+			'style': extras[spec.id].actionable ? 'cursor:pointer' : null
 		});
 		g.appendChild(svgEl('title', {}, [ (extras[spec.id] && extras[spec.id].tip) || spec.name || spec.mac || spec.id ]));
 		halo = svgEl('circle', {
@@ -2512,7 +2509,7 @@ function renderMeshMap(state, chrome) {
 	var items = [];
 	var extras = {};
 	var known = {};
-	var scene, sig, top, overlay, stage, bar;
+	var scene, sig, overlay, stage, bar;
 
 	chrome = chrome || {};
 
@@ -2531,6 +2528,7 @@ function renderMeshMap(state, chrome) {
 	});
 	extras.controller = {
 		kind: 'controller',
+		actionable: true,
 		tip: items[0].name
 	};
 	known.controller = true;
@@ -2547,7 +2545,7 @@ function renderMeshMap(state, chrome) {
 		dbm = link === 'wifi' ? mapUplinkRssi(m) : null;
 		speed = mapBridgeSpeed(m);
 		metric = speed || (link ? mapEdgeMetric(link, dbm) : '');
-		kind = speed ? 'speed' : (link === 'wifi' && dbm ? 'dbm' : (metric ? 'dash' : ''));
+		kind = speed ? 'speed' : (dbm ? 'dbm' : '');
 		items.push({
 			id: m.id,
 			kind: 'node',
@@ -2564,6 +2562,7 @@ function renderMeshMap(state, chrome) {
 		extras[m.id] = {
 			kind: 'node',
 			member: m,
+			actionable: true,
 			tip: (m.name || m.hostname || m.id) + (speed ? ' · ' + speed : '')
 		};
 		known[m.id] = true;
@@ -2611,12 +2610,13 @@ function renderMeshMap(state, chrome) {
 					unknown: c.state === 'unknown',
 					link: link,
 					metric: speed || mapEdgeMetric(link, dbm),
-					metricKind: speed ? 'speed' : (link === 'wifi' && dbm ? 'dbm' : 'dash'),
+					metricKind: speed ? 'speed' : (dbm ? 'dbm' : ''),
 					active: !!mapLive.macs[macKey] || !!motion.macs[macKey]
 				});
 				extras[id] = {
 					kind: 'client',
 					client: c,
+					actionable: true,
 					parent: parent,
 					tip: parts.name ? '%s (%s)'.format(parts.name, c.mac) : (c.mac || '')
 				};
@@ -2634,13 +2634,11 @@ function renderMeshMap(state, chrome) {
 		mapCam.user = false;
 	}
 
-	top = mapOverlayTop();
-
 	if (chrome.addButton && chrome.addButton.style)
 		chrome.addButton.style.marginLeft = 'auto';
 
 	bar = E('div', {
-		'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:8px 12px;background:#fff;border-bottom:1px solid #d5d5d5'
+		'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:8px 12px;background:var(--background-color-high, Canvas);color:var(--text-color-high, CanvasText);border-bottom:1px solid var(--border-color-medium, #767676)'
 	}, [
 		chrome.lead || '',
 		nodesViewSwitch(),
@@ -2669,15 +2667,15 @@ function renderMeshMap(state, chrome) {
 
 	stage = E('div', {
 		'class': 'roamd-map-stage',
-		'style': 'position:relative;flex:1 1 auto;min-height:0;background:' + MAP_THEME.bg + ';overflow:hidden;touch-action:none;cursor:grab;user-select:none'
+		'style': 'position:relative;height:clamp(22rem, 76vh, 58rem);background-color:' + MAP_THEME.bg + ';background-image:radial-gradient(#353c47 1px, transparent 1px);background-size:24px 24px;overflow:hidden;touch-action:none;cursor:grab;user-select:none'
 	}, [
 		mapLegend(),
-		mapPaint(scene, extras, state)
+		mapPaint(scene, extras)
 	]);
 
 	overlay = E('div', {
 		'id': 'roamd-map-overlay',
-		'style': 'position:fixed;left:0;right:0;bottom:0;z-index:790;display:flex;flex-direction:column;background:#f7f7f7;top:' + top + 'px'
+		'style': 'border:1px solid var(--border-color-medium, #767676);border-radius:6px;overflow:hidden'
 	}, [
 		E('style', {}, mapOverlayCss()),
 		chrome.deps || '',
@@ -3093,20 +3091,28 @@ function nameCell(m) {
 
 function replaceNodes(state) {
 	var pane = document.getElementById('mesh-nodes-pane');
-	var map = pane && pane.querySelector('.roamd-map');
-	var scroll = map ? { left: map.scrollLeft, top: map.scrollTop } : null;
+	var focused = document.activeElement;
+	var key = pane && pane.contains(focused) && focused.getAttribute('data-key');
 
-	if (pane)
-		dom.content(pane, renderNodes(state || {}));
+	if (mapObserver) {
+		mapObserver.disconnect();
+		mapObserver = null;
+	}
 
-	if (!scroll || !pane)
+	if (!pane)
 		return;
 
-	map = pane.querySelector('.roamd-map');
+	dom.content(pane, renderNodes(state || {}));
 
-	if (map) {
-		map.scrollLeft = scroll.left;
-		map.scrollTop = scroll.top;
+	if (key) {
+		var nodes = pane.querySelectorAll('[data-key][tabindex]');
+
+		for (var i = 0; i < nodes.length; i++) {
+			if (nodes[i].getAttribute('data-key') === key) {
+				nodes[i].focus({ preventScroll: true });
+				break;
+			}
+		}
 	}
 }
 
