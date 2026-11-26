@@ -1392,8 +1392,8 @@ function signalBlock(c) {
 function clientDialog(c, hints, ov, nodeName, allNodes, refresh) {
 	var mac = c.mac.toLowerCase();
 	var saved = ov[mac] || { band: 'both', alias: '', nodes: [] };
-	var sysName = common.hostName(hints, c.mac) || c.host || '';
-	var title = saved.alias || sysName || c.mac;
+	var sysName = usableClientName(c.host, c.mac) || usableClientName(common.hostName(hints, c.mac), c.mac);
+	var title = clientAnnouncedName(c, hints, ov) || c.mac;
 	var nameInput = E('input', {
 		'type': 'text', 'class': 'cbi-input-text', 'style': 'width:100%',
 		'value': saved.alias || '',
@@ -1585,6 +1585,43 @@ function viaNodeLabel(c, nodeName) {
 	return nodeName[c.node || 'controller'] || c.node || _('controller');
 }
 
+/* host is the name the daemon already published (DHCP lease, or mDNS / rDNS
+ * handed back through mesh_client_host). A manual alias still wins. */
+function usableClientName(name, mac) {
+	name = String(name || '').trim();
+	if (!name || name === '*')
+		return '';
+	if (mac && name.toLowerCase() === String(mac).toLowerCase())
+		return '';
+
+	return name;
+}
+
+function clientAnnouncedName(c, hints, ov) {
+	var mac = c.mac || '';
+	var saved = (ov && ov[mac.toLowerCase()]) || {};
+
+	return usableClientName(saved.alias, mac) ||
+		usableClientName(c.host, mac) ||
+		usableClientName(common.hostName(hints, mac), mac);
+}
+
+function clientHead(c, name, state) {
+	var dot = E('span', {
+		'class': 'roamd-dot',
+		'style': 'background:%s'.format(state.color),
+		'title': state.label
+	});
+
+	if (!name)
+		return E('div', {}, [ dot, E('strong', {}, c.mac || '') ]);
+
+	return E('div', { 'class': 'roamd-id' }, [
+		E('div', { 'class': 'roamd-id-line' }, [ dot, E('strong', {}, name) ]),
+		E('div', { 'class': 'roamd-id-mac' }, c.mac || '')
+	]);
+}
+
 function clientTitle(c, hints, ov) {
 	var alias = common.clientLabel(hints, ov, c.mac) || c.host || c.mac;
 	var state = clientState(c);
@@ -1710,7 +1747,7 @@ function servingSample(c) {
 }
 
 function clientRow(c, hints, ov, nodeName, allNodes, refresh) {
-	var name = common.clientLabel(hints, ov, c.mac) || c.host || '';
+	var name = clientAnnouncedName(c, hints, ov);
 	var state = clientState(c);
 	var seen = clientSeen(c);
 	var sample = (!c.wired && seen) ? servingSample(c) : null;
@@ -1732,15 +1769,7 @@ function clientRow(c, hints, ov, nodeName, allNodes, refresh) {
 
 	return E('div', { 'class': 'roamd-row' + (seen ? '' : ' roamd-row-off') }, [
 		E('div', { 'class': 'roamd-row-main' }, [
-			E('div', {}, [
-				E('span', {
-					'class': 'roamd-dot',
-					'style': 'background:%s'.format(state.color),
-					'title': state.label
-				}),
-				E('strong', {}, name || c.mac)
-			]),
-			name ? common.note(c.mac) : '',
+			clientHead(c, name, state),
 			seen ? '' : common.note(viaNodeLabel(c, nodeName))
 		]),
 		E('span', {}, band),
