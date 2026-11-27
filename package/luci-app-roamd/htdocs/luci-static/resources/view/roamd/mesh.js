@@ -1171,8 +1171,8 @@ function mapGeomStar(cx, cy, outer, inner, n) {
 	for (i = 0; i < n * 2; i++) {
 		a = -Math.PI / 2 + i * Math.PI / n;
 		r = (i % 2) ? inner : outer;
-		pts.push((Math.round(cx + Math.cos(a) * r * 10) / 10) + ',' +
-			(Math.round(cy + Math.sin(a) * r * 10) / 10));
+		pts.push((Math.round((cx + Math.cos(a) * r) * 10) / 10) + ',' +
+			(Math.round((cy + Math.sin(a) * r) * 10) / 10));
 	}
 
 	return pts.join(' ');
@@ -1807,8 +1807,8 @@ function mapGeomLayout(items) {
 			from: item.parent,
 			to: item.id,
 			kind: item.link || (item.kind === 'client' ? 'wifi' : ''),
-			metric: show ? item.metric : '',
-			metricKind: show ? item.metricKind : '',
+			metric: item.metric || '',
+			metricKind: item.metricKind || '',
 			x1: a.x,
 			y1: a.y,
 			x2: b.x,
@@ -2387,6 +2387,7 @@ function mapFloatGeometry(scene) {
 		edge.lx = (edge.x1 + edge.x2) / 2 - dy / distance * 12;
 		edge.ly = (edge.y1 + edge.y2) / 2 + dx / distance * 12;
 	});
+	mapFloatLabels(scene);
 	var xs = [], ys = [];
 	scene.nodes.forEach(function(node) {
 		xs.push(node.x - 30, node.x + 30);
@@ -2396,9 +2397,86 @@ function mapFloatGeometry(scene) {
 			ys.push(node.label.y0, node.label.y1);
 		}
 	});
+	scene.edges.forEach(function(edge) {
+		if (edge.metric) {
+			var half = mapGeomTextWidth(edge.metric, 11) / 2 + 6;
+			xs.push(edge.lx - half, edge.lx + half);
+			ys.push(edge.ly - 12, edge.ly + 4);
+		}
+	});
 	if (xs.length)
 		scene.bounds = { x0: Math.min.apply(null, xs), x1: Math.max.apply(null, xs),
 			y0: Math.min.apply(null, ys), y1: Math.max.apply(null, ys) };
+}
+
+function mapFloatLabels(scene) {
+	var occupied = scene.nodes.map(function(node) {
+		return { x0: node.x - node.r - 12, x1: node.x + node.r + 12,
+			y0: node.y - node.r - 12, y1: node.y + node.r + 12 };
+	});
+
+	function overlaps(box) {
+		return occupied.some(function(other) {
+			return box.x0 < other.x1 + 5 && box.x1 > other.x0 - 5 &&
+				box.y0 < other.y1 + 5 && box.y1 > other.y0 - 5;
+		});
+	}
+
+	scene.nodes.forEach(function(node) {
+		if (!node.label)
+			return;
+		var label = node.label;
+		var width = label.x1 - label.x0;
+		var height = label.y1 - label.y0;
+		var box;
+
+		for (var ring = 0; ring < 60; ring++) {
+			var distance = node.r + 20 + ring * 10;
+			var candidates = [
+				{ x: node.x, y: node.y - distance - height / 2 },
+				{ x: node.x, y: node.y + distance + height / 2 },
+				{ x: node.x + distance + width / 2, y: node.y },
+				{ x: node.x - distance - width / 2, y: node.y }
+			];
+			for (var i = 0; i < candidates.length; i++) {
+				var center = candidates[i];
+				box = { x0: center.x - width / 2, x1: center.x + width / 2,
+					y0: center.y - height / 2, y1: center.y + height / 2 };
+				if (!overlaps(box))
+					break;
+			}
+			if (!overlaps(box))
+				break;
+		}
+		label.x = (box.x0 + box.x1) / 2;
+		label.y = box.y0 + label.lines[0].size;
+		label.anchor = 'middle';
+		label.x0 = box.x0;
+		label.x1 = box.x1;
+		label.y0 = box.y0;
+		label.y1 = box.y1;
+		occupied.push(box);
+	});
+
+	scene.edges.forEach(function(edge) {
+		if (!edge.metric)
+			return;
+		var width = mapGeomTextWidth(edge.metric, 11) + 12;
+		var dx = edge.x2 - edge.x1, dy = edge.y2 - edge.y1;
+		var length = Math.sqrt(dx * dx + dy * dy) || 1;
+		var box;
+		for (var i = 0; i < 100; i++) {
+			var fraction = [ .5, .35, .65, .2, .8 ][i % 5];
+			var offset = (12 + Math.floor(i / 10) * 18) * (i % 10 < 5 ? 1 : -1);
+			edge.lx = edge.x1 + dx * fraction - dy / length * offset;
+			edge.ly = edge.y1 + dy * fraction + dx / length * offset;
+			box = { x0: edge.lx - width / 2, x1: edge.lx + width / 2,
+				y0: edge.ly - 12, y1: edge.ly + 4 };
+			if (!overlaps(box))
+				break;
+		}
+		occupied.push(box);
+	});
 }
 
 function mapFloatStep(scene) {
@@ -2409,9 +2487,9 @@ function mapFloatStep(scene) {
 			var dx = other.x - node.x, dy = other.y - node.y;
 			var distance = Math.sqrt(dx * dx + dy * dy);
 			if (distance < 1) { dx = 1; dy = 1; distance = Math.sqrt(2); }
-			var clearance = 85;
+			var clearance = 125;
 			if (node.label && other.label)
-				clearance = Math.max(85, Math.min(200,
+				clearance = Math.max(125, Math.min(260,
 					(node.label.x1 - node.label.x0 + other.label.x1 - other.label.x0) / 2 + 25));
 			var force = Math.min(12, 1800 / (distance * distance) +
 				Math.max(0, clearance - distance) * .08);
@@ -2425,7 +2503,7 @@ function mapFloatStep(scene) {
 		var from = scene.byId[edge.from], to = scene.byId[edge.to];
 		var dx = to.x - from.x, dy = to.y - from.y;
 		var distance = Math.sqrt(dx * dx + dy * dy) || 1;
-		var force = (distance - (to.kind === 'client' ? 160 : 260)) * .012;
+		var force = (distance - (to.kind === 'client' ? 220 : 330)) * .012;
 		from.vx += dx / distance * force;
 		from.vy += dy / distance * force;
 		to.vx -= dx / distance * force;
@@ -2565,6 +2643,9 @@ function mapPaint(scene, extras) {
 				y: Math.round(edge.ly),
 				'text-anchor': 'middle',
 				fill: textFill,
+				stroke: MAP_THEME.bg,
+				'stroke-width': 4,
+				'paint-order': 'stroke',
 				'font-size': 11,
 				'font-family': 'sans-serif',
 				'pointer-events': 'none'
@@ -2785,7 +2866,7 @@ function renderMeshMap(state, chrome) {
 		link = orphan ? '' : (m.connection === 'wifi' ? 'wifi' : (m.connection === 'wired' ? 'wired' : ''));
 		dbm = link === 'wifi' ? mapUplinkRssi(m) : null;
 		speed = mapBridgeSpeed(m);
-		metric = speed || (link ? mapEdgeMetric(link, dbm) : '');
+		metric = [ link ? mapEdgeMetric(link, dbm) : '', speed ].filter(Boolean).join(' · ');
 		kind = speed ? 'speed' : (dbm ? 'dbm' : '');
 		items.push({
 			id: m.id,
@@ -2850,7 +2931,7 @@ function renderMeshMap(state, chrome) {
 					online: c.state !== 'unknown',
 					unknown: c.state === 'unknown',
 					link: link,
-					metric: speed || mapEdgeMetric(link, dbm),
+					metric: [ mapEdgeMetric(link, dbm), speed ].filter(Boolean).join(' · '),
 					metricKind: speed ? 'speed' : (dbm ? 'dbm' : ''),
 					active: !!mapLive.macs[macKey] || !!motion.macs[macKey]
 				});
